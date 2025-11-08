@@ -347,6 +347,7 @@ function displaySatellites(satellites, userLocation) {
         altitude: document.getElementById('satelliteAltitude'),
         velocity: document.getElementById('satelliteVelocity'),
         country: document.getElementById('satelliteCountry'),
+        distance: document.getElementById('satelliteDistance'),
         launch: document.getElementById('satelliteLaunch')
     };
 
@@ -360,6 +361,16 @@ function displaySatellites(satellites, userLocation) {
             const full = cc ? countryCodeToName(cc) : '';
             panel.country.textContent = cc ? (full || cc) : 'N/A';
         }
+        if (panel.distance) {
+            sat.distance = sat.distance / 1000; // store for future reference
+            if (typeof sat.distance === 'number') {
+                panel.distance.textContent = sat.distance.toFixed(2);
+            } else {
+                // Compute distance if not provided
+                const dKm = haversineKm(userLocation.lat, userLocation.lng, sat.lat, sat.lng)/1000;
+                panel.distance.textContent = dKm.toFixed(2);
+            }
+        }   
         if (panel.launch) panel.launch.textContent = sat.launch || 'N/A';
         if (panel.velocity) {
             // compute approximate velocity from consecutive samples
@@ -618,6 +629,7 @@ async function fetchPositions() {
                 name: p.name || `Satellite ${p.index ?? (idx + 1)}`,
                 country: p.country,
                 launch: p.launch,
+                distance: p.distance,
                 lat: parseFloat(p.lat),
                 lng: parseFloat(p.lng),
                 // Backend altitude is meters; convert to km for display
