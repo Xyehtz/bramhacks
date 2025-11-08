@@ -215,6 +215,15 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Endpoint to serve Google Maps API key securely (used by client-side to dynamically load Maps)
+app.get('/api/maps/key', (req, res) => {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    return res.status(500).json({ error: 'Google Maps API key not configured' });
+  }
+  res.json({ key: apiKey });
+});
+
 // Endpoint to serve latest computed satellite positions (first 50)
 app.get('/api/positions', async (req, res) => {
   try {
