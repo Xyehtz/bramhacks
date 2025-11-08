@@ -8,6 +8,8 @@ const satellite = require('satellite.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+// Target number of satellites to persist/compute
+const TARGET_COUNT = 200;
 
 // Middleware
 app.use(cors());
@@ -43,7 +45,7 @@ app.get('/api/satellites', async (req, res) => {
 
     res.json(response.data);
 
-    // Extract first 50 TLE pairs (tle1, tle2) for logging and saving
+    // Extract first N TLE pairs (tle1, tle2) for logging and saving
     try {
       const rawData = response.data;
       let dataArray = [];
@@ -59,26 +61,87 @@ app.get('/api/satellites', async (req, res) => {
         }
       }
 
-      const tlePairs = dataArray.slice(0, 50).map(item => ({
-        tle1: item?.tle1,
-        tle2: item?.tle2
-      })).filter(p => p.tle1 && p.tle2);
+      // Build list of available TLE items with satnum parsed from TLE line 1
+      const available = dataArray
+        .map(item => {
+          const tle1 = item?.tle1;
+          const tle2 = item?.tle2;
+          if (!tle1 || !tle2) return null;
+          const match = /^1\s+(\d{5})/.exec(tle1.trim());
+          const satnum = match ? parseInt(match[1], 10) : undefined;
+          return satnum ? { satnum, tle1, tle2 } : null;
+        })
+        .filter(Boolean);
 
-      if (tlePairs.length) {
-        console.log('Extracted first TLE pairs (up to 50):');
-        for (const pair of tlePairs) {
-          console.log(pair.tle1);
-          console.log(pair.tle2);
-          console.log('');
-        }
-        // Save for reference
-        fs.writeFile('TLE_first_50.json', JSON.stringify(tlePairs, null, 2), 'utf8', (err) => {
-          if (err) {
-            console.error('Failed to write TLE_first_50.json:', err.message);
+      const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+      let selected = [];
+
+      if (fs.existsSync(selectionPath)) {
+        // Load existing persistent selection and refresh their TLEs from current availability
+        try {
+          const existing = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
+          if (Array.isArray(existing)) {
+            const availMap = new Map(available.map(a => [a.satnum, a]));
+            selected = existing.map(rec => {
+              const upd = availMap.get(rec.satnum);
+              return upd ? { ...rec, tle1: upd.tle1, tle2: upd.tle2, updatedAt: new Date().toISOString() } : rec;
+            });
           }
+        } catch (e) {
+          console.warn('Failed to read Selected_satellites.json, reinitializing from current data:', e.message);
+        }
+      }
+      
+      // If we already have a selection but it's smaller than TARGET_COUNT, top it up deterministically
+      if (selected.length && selected.length < TARGET_COUNT) {
+        try {
+          const have = new Set(selected.map(s => s.satnum));
+          // Sort available by satnum ascending for deterministic append
+          const sortedAvail = available
+            .filter(a => !have.has(a.satnum))
+            .sort((a, b) => a.satnum - b.satnum);
+          let idx = selected.length;
+          for (const rec of sortedAvail) {
+            selected.push({
+              index: ++idx,
+              satnum: rec.satnum,
+              tle1: rec.tle1,
+              tle2: rec.tle2,
+              selectedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+            if (selected.length >= TARGET_COUNT) break;
+          }
+        } catch (topUpErr) {
+          console.warn('Failed to top up selection:', topUpErr.message);
+        }
+      }
+      
+      if (!selected.length) {
+        // Initialize a deterministic selection: first TARGET_COUNT by satnum ascending
+        const uniqueBySatnum = new Map();
+        for (const item of available) {
+          if (!uniqueBySatnum.has(item.satnum)) uniqueBySatnum.set(item.satnum, item);
+          if (uniqueBySatnum.size >= TARGET_COUNT) break;
+        }
+        selected = Array.from(uniqueBySatnum.values())
+          .sort((a, b) => a.satnum - b.satnum)
+          .slice(0, TARGET_COUNT)
+          .map((rec, idx) => ({ index: idx + 1, satnum: rec.satnum, tle1: rec.tle1, tle2: rec.tle2, selectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
+      }
+
+      if (selected.length) {
+        // Persist the stable selection and a convenience TLE_first_50.json reflecting the selection only (may contain up to TARGET_COUNT entries)
+        fs.writeFile(selectionPath, JSON.stringify(selected, null, 2), 'utf8', (err) => {
+          if (err) console.error('Failed to write Selected_satellites.json:', err.message);
         });
+        const tlePairs = selected.map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
+        fs.writeFile('TLE_first_50.json', JSON.stringify(tlePairs.slice(0, TARGET_COUNT), null, 2), 'utf8', (err) => {
+          if (err) console.error('Failed to write TLE_first_50.json:', err.message);
+        });
+        console.log(`Persistent selection active: ${selected.length} satellites (target ${TARGET_COUNT})`);
       } else {
-        console.warn('No TLE pairs (tle1/tle2) found in the first 50 items.');
+        console.warn('No TLE pairs available to persist selection.');
       }
     } catch (e) {
       console.error('Error extracting first 50 TLE pairs:', e.message);
@@ -123,7 +186,7 @@ app.get('/api/satellites', async (req, res) => {
             }
           }
         }
-        tlePairsForCalc = dataArray.slice(0, 50).map(item => ({
+        tlePairsForCalc = dataArray.slice(0, TARGET_COUNT).map(item => ({
           tle1: item?.tle1,
           tle2: item?.tle2
         })).filter(p => p.tle1 && p.tle2);
@@ -136,8 +199,8 @@ app.get('/api/satellites', async (req, res) => {
         const gmst = satellite.gstime(now);
         const results = [];
 
-        console.log('Computing positions for up to 50 TLE pairs...');
-        tlePairsForCalc.slice(0, 50).forEach((pair, idx) => {
+        console.log(`Computing positions for up to ${TARGET_COUNT} TLE pairs...`);
+        tlePairsForCalc.slice(0, TARGET_COUNT).forEach((pair, idx) => {
           try {
             const satrec = satellite.twoline2satrec(pair.tle1, pair.tle2);
             const pv = satellite.propagate(
@@ -158,8 +221,13 @@ app.get('/api/satellites', async (req, res) => {
             const latitude = satellite.degreesLat(positionGD.latitude);
             const altitude = positionGD.height * 1000; // meters
 
+            // derive satnum from TLE line 1
+            const match = /^1\s+(\d{5})/.exec((pair.tle1 || '').trim());
+            const satnum = match ? parseInt(match[1], 10) : undefined;
+
             results.push({
               index: idx + 1,
+              satnum,
               tle1: pair.tle1,
               tle2: pair.tle2,
               latitude,
@@ -173,7 +241,7 @@ app.get('/api/satellites', async (req, res) => {
           }
         });
 
-        // Persist computed positions to a file for reference
+        // Persist computed positions to a file for reference (still using legacy filename)
         fs.writeFile(
           path.join(__dirname, 'TLE_positions_first_50.json'),
           JSON.stringify(results, null, 2),
@@ -224,7 +292,7 @@ app.get('/api/maps/key', (req, res) => {
   res.json({ key: apiKey });
 });
 
-// Endpoint to serve latest computed satellite positions (first 50)
+// Endpoint to serve latest computed satellite positions (up to TARGET_COUNT)
 app.get('/api/positions', async (req, res) => {
   try {
     const positionsPath = path.join(__dirname, 'TLE_positions_first_50.json');
@@ -235,14 +303,23 @@ app.get('/api/positions', async (req, res) => {
         const data = JSON.parse(content);
         if (Array.isArray(data) && data.length) {
           // Normalize keys for frontend: lat/lng in degrees, altitude in meters
-          const positions = data.map(p => ({
-            index: p.index,
-            lat: p.latitude,
-            lng: p.longitude,
-            altitude: p.altitude,
-            tle1: p.tle1,
-            tle2: p.tle2
-          })).filter(p => isFinite(p.lat) && isFinite(p.lng));
+          const positions = data.map(p => {
+            // derive satnum if missing
+            let satnum = p.satnum;
+            if (!satnum && p.tle1) {
+              const m = /^1\s+(\d{5})/.exec(String(p.tle1).trim());
+              satnum = m ? parseInt(m[1], 10) : undefined;
+            }
+            return ({
+              index: p.index,
+              satnum,
+              lat: p.latitude,
+              lng: p.longitude,
+              altitude: p.altitude,
+              tle1: p.tle1,
+              tle2: p.tle2
+            });
+          }).filter(p => isFinite(p.lat) && isFinite(p.lng));
           return res.json({ positions });
         }
       } catch (e) {
@@ -250,18 +327,34 @@ app.get('/api/positions', async (req, res) => {
       }
     }
 
-    // Try to compute from TLE_first_50.json
-    const tlePath = path.join(__dirname, 'TLE_first_50.json');
+    // Prefer computing from persistent Selected_satellites.json
+    const selectionPath = path.join(__dirname, 'Selected_satellites.json');
     let tlePairs = [];
-    if (fs.existsSync(tlePath)) {
+    if (fs.existsSync(selectionPath)) {
       try {
-        const content = fs.readFileSync(tlePath, 'utf8');
+        const content = fs.readFileSync(selectionPath, 'utf8');
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed)) {
-          tlePairs = parsed.slice(0, 50);
+          tlePairs = parsed.slice(0, TARGET_COUNT).map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
         }
       } catch (e) {
-        console.warn('Failed to read/parse TLE_first_50.json:', e.message);
+        console.warn('Failed to read/parse Selected_satellites.json, will try TLE_first_50.json fallback:', e.message);
+      }
+    }
+
+    // Fallback to legacy TLE_first_50.json if selection file not available
+    if (!tlePairs.length) {
+      const tlePath = path.join(__dirname, 'TLE_first_50.json');
+      if (fs.existsSync(tlePath)) {
+        try {
+          const content = fs.readFileSync(tlePath, 'utf8');
+          const parsed = JSON.parse(content);
+          if (Array.isArray(parsed)) {
+            tlePairs = parsed.slice(0, TARGET_COUNT);
+          }
+        } catch (e) {
+          console.warn('Failed to read/parse TLE_first_50.json:', e.message);
+        }
       }
     }
 
@@ -305,6 +398,7 @@ app.get('/api/positions', async (req, res) => {
 
     const positions = results.map(p => ({
       index: p.index,
+      satnum: p.satnum,
       lat: p.latitude,
       lng: p.longitude,
       altitude: p.altitude,
