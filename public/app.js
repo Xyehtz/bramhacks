@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         // Fetch Google Maps API key from server
         const response = await fetch('/api/maps/key');
+        console.log(response);
         if (!response.ok) {
             throw new Error('Failed to fetch Google Maps API key');
         }
