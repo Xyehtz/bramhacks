@@ -69,7 +69,10 @@ app.get('/api/satellites', async (req, res) => {
                     if (!tle1 || !tle2) return null;
                     const match = /^1\s+(\d{5})/.exec(tle1.trim());
                     const satnum = match ? parseInt(match[1], 10) : undefined;
-                    return satnum ? { satnum, tle1, tle2 } : null;
+                    const name = item?.name;
+                    const country = item?.country ?? item?.cc;
+                    const launch = item?.launch ?? item?.launch_date ?? item?.launchDate;
+                    return satnum ? { satnum, tle1, tle2, name, country, launch } : null;
                 })
                 .filter(Boolean);
 
@@ -84,7 +87,15 @@ app.get('/api/satellites', async (req, res) => {
                         const availMap = new Map(available.map(a => [a.satnum, a]));
                         selected = existing.map(rec => {
                             const upd = availMap.get(rec.satnum);
-                            return upd ? { ...rec, tle1: upd.tle1, tle2: upd.tle2, updatedAt: new Date().toISOString() } : rec;
+                            return upd ? { 
+                                ...rec, 
+                                tle1: upd.tle1, 
+                                tle2: upd.tle2, 
+                                name: upd.name ?? rec.name, 
+                                country: upd.country ?? rec.country, 
+                                launch: upd.launch ?? rec.launch,
+                                updatedAt: new Date().toISOString() 
+                            } : rec;
                         });
                     }
                 } catch (e) {
@@ -107,6 +118,9 @@ app.get('/api/satellites', async (req, res) => {
                             satnum: rec.satnum,
                             tle1: rec.tle1,
                             tle2: rec.tle2,
+                            name: rec.name,
+                            country: rec.country,
+                            launch: rec.launch,
                             selectedAt: new Date().toISOString(),
                             updatedAt: new Date().toISOString()
                         });
@@ -127,7 +141,17 @@ app.get('/api/satellites', async (req, res) => {
                 selected = Array.from(uniqueBySatnum.values())
                     .sort((a, b) => a.satnum - b.satnum)
                     .slice(0, TARGET_COUNT)
-                    .map((rec, idx) => ({ index: idx + 1, satnum: rec.satnum, tle1: rec.tle1, tle2: rec.tle2, selectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
+                    .map((rec, idx) => ({ 
+                        index: idx + 1, 
+                        satnum: rec.satnum, 
+                        tle1: rec.tle1, 
+                        tle2: rec.tle2, 
+                        name: rec.name, 
+                        country: rec.country, 
+                        launch: rec.launch,
+                        selectedAt: new Date().toISOString(), 
+                        updatedAt: new Date().toISOString() 
+                    }));
             }
 
             if (selected.length) {
@@ -336,7 +360,10 @@ app.get('/api/positions', async (req, res) => {
                         if (!tle1 || !tle2) return null;
                         const m = /^1\s+(\d{5})/.exec(String(tle1).trim());
                         const satnum = m ? parseInt(m[1], 10) : undefined;
-                        return { satnum, tle1, tle2 };
+                        const name = item?.name;
+                        const country = item?.country ?? item?.cc;
+                        const launch = item?.launch ?? item?.launch_date ?? item?.launchDate;
+                        return { satnum, tle1, tle2, name, country, launch };
                     })
                     .filter(p => p && p.tle1 && p.tle2);
             } catch (freshErr) {
@@ -350,7 +377,7 @@ app.get('/api/positions', async (req, res) => {
                     if (fs.existsSync(selectionPath)) {
                         const parsed = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
                         if (Array.isArray(parsed)) {
-                            tleCandidates = parsed.map(s => ({ satnum: s.satnum, tle1: s.tle1, tle2: s.tle2 }));
+                            tleCandidates = parsed.map(s => ({ satnum: s.satnum, tle1: s.tle1, tle2: s.tle2, name: s.name, country: s.country, launch: s.launch }));
                         }
                     }
                 } catch {}
@@ -374,6 +401,8 @@ app.get('/api/positions', async (req, res) => {
             const now = new Date();
             const gmst = satellite.gstime(now);
             const results = [];
+            // Build a quick lookup for metadata by satnum
+            const metaMap = new Map(tleCandidates.map(c => [c.satnum, { name: c.name, country: c.country, launch: c.launch }]));
             for (let idx = 0; idx < tleCandidates.length; idx++) {
                 const pair = tleCandidates[idx];
                 try {
@@ -394,7 +423,8 @@ app.get('/api/positions', async (req, res) => {
                     const latitude = satellite.degreesLat(positionGD.latitude);
                     const altitude = positionGD.height * 1000; // meters
                     const dist = haversine(latQ, lonQ, latitude, longitude);
-                    results.push({ index: idx + 1, satnum: pair.satnum, tle1: pair.tle1, tle2: pair.tle2, latitude, longitude, altitude, distance: dist });
+                    const meta = metaMap.get(pair.satnum) || {};
+                    results.push({ index: idx + 1, satnum: pair.satnum, tle1: pair.tle1, tle2: pair.tle2, name: meta.name, country: meta.country, launch: meta.launch, latitude, longitude, altitude, distance: dist });
                 } catch {}
             }
 
@@ -412,6 +442,9 @@ app.get('/api/positions', async (req, res) => {
             const positions = top.map(p => ({
                 index: p.index,
                 satnum: p.satnum,
+                name: p.name,
+                country: p.country,
+                launch: p.launch,
                 lat: p.latitude,
                 lng: p.longitude,
                 altitude: p.altitude,
@@ -439,6 +472,9 @@ app.get('/api/positions', async (req, res) => {
                         return ({
                             index: p.index,
                             satnum,
+                            name: p.name,
+                            country: p.country,
+                            launch: p.launch,
                             lat: p.latitude,
                             lng: p.longitude,
                             altitude: p.altitude,
@@ -461,7 +497,7 @@ app.get('/api/positions', async (req, res) => {
                 const content = fs.readFileSync(selectionPath, 'utf8');
                 const parsed = JSON.parse(content);
                 if (Array.isArray(parsed)) {
-                    tlePairs = parsed.slice(0, TARGET_COUNT).map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
+                    tlePairs = parsed.slice(0, TARGET_COUNT).map(s => ({ satnum: s.satnum, tle1: s.tle1, tle2: s.tle2, name: s.name, country: s.country, launch: s.launch }));
                 }
             } catch (e) {
                 console.warn('Failed to read/parse Selected_satellites.json, will try TLE_first_50.json fallback:', e.message);
@@ -509,7 +545,7 @@ app.get('/api/positions', async (req, res) => {
                 const longitude = satellite.degreesLong(positionGD.longitude);
                 const latitude = satellite.degreesLat(positionGD.latitude);
                 const altitude = positionGD.height * 1000; // meters
-                results.push({ index: idx + 1, tle1: pair.tle1, tle2: pair.tle2, latitude, longitude, altitude });
+                results.push({ index: idx + 1, satnum: pair.satnum, name: pair.name, country: pair.country, launch: pair.launch, tle1: pair.tle1, tle2: pair.tle2, latitude, longitude, altitude });
             } catch (err) {
                 // skip bad pair
             }
