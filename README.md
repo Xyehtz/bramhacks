@@ -139,3 +139,4 @@ Feel free to submit issues and enhancement requests!
 - Position updates occur every 30 seconds to balance accuracy and performance
 - Some browsers may require HTTPS for geolocation to work properly
 
+

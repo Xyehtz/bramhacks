@@ -1,7 +1,14 @@
+// Latest working version
+
 // Test commit for app.js
 // Configuration
 const UPDATE_INTERVAL = 30000; // 30 seconds
 const OVERHEAD_THRESHOLD = 500000; // 500 km in meters
+
+// API Base URL - Set this to your backend URL when deploying to GitHub Pages
+// For local development, leave empty to use relative paths
+// Example: 'https://your-backend.vercel.app' or 'https://your-backend.netlify.app'
+const API_BASE_URL = window.API_BASE_URL || '';
 
 // Global variables
 let map;
@@ -23,8 +30,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     try {
         // Fetch Google Maps API key from server
-        const response = await fetch('/api/maps/key');
-        
+        const response = await fetch(`${API_BASE_URL}/api/maps/key`);
         if (!response.ok) {
             console.error('Server error status:', response.status, response.statusText);
             throw new Error(`Failed to fetch Google Maps API key: ${response.status} ${response.statusText}`);
@@ -257,7 +263,7 @@ async function fetchSatellites(location) {
     try {
         updateStatus('Fetching satellite data...');
         
-        const response = await fetch(`/api/satellites?lat=${location.lat}&lon=${location.lng}`);
+        const response = await fetch(`${API_BASE_URL}/api/satellites?lat=${location.lat}&lon=${location.lng}`);
         const data = await response.json();
 
         if (!response.ok) {
@@ -697,13 +703,13 @@ async function fetchPositions() {
         // Prime backend data by hitting /api/satellites to (re)generate TLE files
         if (userLocation) {
             try {
-                await fetch(`/api/satellites?lat=${userLocation.lat}&lon=${userLocation.lng}`);
+                await fetch(`${API_BASE_URL}/api/satellites?lat=${userLocation.lat}&lon=${userLocation.lng}`);
             } catch (e) {
                 // non-fatal
                 console.warn('Priming /api/satellites failed (continuing):', e);
             }
         }
-        const positionsUrl = userLocation ? `/api/positions?lat=${userLocation.lat}&lon=${userLocation.lng}` : '/api/positions';
+        const positionsUrl = userLocation ? `${API_BASE_URL}/api/positions?lat=${userLocation.lat}&lon=${userLocation.lng}` : `${API_BASE_URL}/api/positions`;
         const resp = await fetch(positionsUrl);
         const json = await resp.json();
         if (!resp.ok) {

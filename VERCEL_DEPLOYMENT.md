@@ -1,215 +1,243 @@
-# Vercel Deployment Guide
+****# Vercel Deployment Guide
 
-This guide will help you deploy the Satellite Tracker application to Vercel and configure the Google Maps API properly.
+This guide explains how to deploy both the frontend and backend to Vercel.
 
 ## Prerequisites
 
-- A Vercel account ([Sign up here](https://vercel.com/signup))
-- A Google Cloud Platform account with Maps JavaScript API enabled
-- Your project pushed to a Git repository (GitHub, GitLab, or Bitbucket)
+- A Vercel account ([Sign up here](https://vercel.com/signup) - free tier available)
+- Your code pushed to a Git repository (GitHub, GitLab, or Bitbucket)
+- Node.js installed locally (for testing)
 
-## Step 1: Prepare Your Project
+## Overview
 
-The project is already configured for Vercel deployment:
-- ✅ API routes are in the `api/` folder (serverless functions)
-- ✅ Static files are in the `public/` folder
-- ✅ `vercel.json` is configured correctly
-- ✅ No file system writes (compatible with serverless)
+Vercel will deploy:
+- **Backend**: Express.js server as serverless functions
+- **Frontend**: Static files from the `public/` folder
+- **API Routes**: All `/api/*` routes will be handled by your Express server
+
+**Note**: The server has been configured to work with Vercel's read-only filesystem. Data files (TLE cache, etc.) are stored in `/tmp` on Vercel, which is temporary but sufficient for serverless functions.
+
+## Step 1: Prepare Your Code
+
+The code is already configured for Vercel:
+- ✅ `vercel.json` - Vercel configuration file
+- ✅ `server.js` - Exports Express app for Vercel
+- ✅ `public/` - Contains all frontend files
 
 ## Step 2: Deploy to Vercel
 
-### Option A: Deploy via Vercel Dashboard
+### Option A: Deploy via Vercel Dashboard (Recommended)
 
-1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
-2. Click "Add New Project"
-3. Import your Git repository
-4. Vercel will auto-detect the project settings
-5. Click "Deploy"
+1. **Go to [Vercel Dashboard](https://vercel.com/dashboard)**
 
-### Option B: Deploy via CLI
+2. **Click "Add New..." → "Project"**
 
-```bash
-# Install Vercel CLI
-npm i -g vercel
+3. **Import your Git repository:**
+   - Select your Git provider (GitHub, GitLab, Bitbucket)
+   - Choose your repository
+   - Click "Import"
 
-# Login to Vercel
-vercel login
+4. **Configure the project:**
+   - **Framework Preset**: Other (or leave default)
+   - **Root Directory**: `./` (root of repository)
+   - **Build Command**: Leave empty (no build needed)
+   - **Output Directory**: Leave empty (Vercel will handle it)
 
-# Deploy
-vercel
+5. **Add Environment Variables:**
+   - Click "Environment Variables"
+   - Add: `GOOGLE_MAPS_API_KEY` = `your_actual_api_key_here`
+   - Click "Add" for each environment (Production, Preview, Development)
 
-# For production deployment
-vercel --prod
+6. **Click "Deploy"**
+
+7. **Wait for deployment** (usually 1-2 minutes)
+
+8. **Copy your deployment URL** (e.g., `https://bramhacks-abc123.vercel.app`)
+
+### Option B: Deploy via Vercel CLI
+
+1. **Install Vercel CLI:**
+   ```bash
+   npm install -g vercel
+   ```
+
+2. **Login to Vercel:**
+   ```bash
+   vercel login
+   ```
+
+3. **Deploy:**
+   ```bash
+   vercel
+   ```
+
+4. **Follow the prompts:**
+   - Set up and deploy? **Y**
+   - Which scope? (select your account)
+   - Link to existing project? **N** (first time) or **Y** (subsequent)
+   - Project name? (press Enter for default)
+   - Directory? (press Enter for `./`)
+   - Override settings? **N**
+
+5. **Add environment variables:**
+   ```bash
+   vercel env add GOOGLE_MAPS_API_KEY
+   ```
+   - Enter your API key when prompted
+   - Select environments: Production, Preview, Development
+
+6. **Redeploy to apply environment variables:**
+   ```bash
+   vercel --prod
+   ```
+
+## Step 3: Verify Deployment
+
+1. **Visit your Vercel URL** (e.g., `https://your-project.vercel.app`)
+
+2. **Test the API endpoints:**
+   - `https://your-project.vercel.app/api/health` - Should return `{"status":"ok"}`
+   - `https://your-project.vercel.app/api/maps/key` - Should return your Google Maps API key
+
+3. **Test the frontend:**
+   - The main page should load
+   - Google Maps should display
+   - Satellite tracking should work
+
+## Step 4: Update GitHub Pages Frontend (If Using)
+
+If you're also using GitHub Pages for the frontend:
+
+1. **Open `public/index.html`**
+
+2. **Uncomment and update the API base URL:**
+   ```html
+   <script>window.API_BASE_URL = 'https://your-project.vercel.app';</script>
+   ```
+
+3. **Commit and push:**
+   ```bash
+   git add public/index.html
+   git commit -m "Configure Vercel backend URL"
+   git push origin main
+   ```
+
+## Environment Variables
+
+### Required Variables
+
+- `GOOGLE_MAPS_API_KEY` - Your Google Maps API key
+
+### Optional Variables
+
+- `PORT` - Not needed on Vercel (automatically set)
+- `VERCEL` - Automatically set by Vercel (don't set manually)
+
+## Project Structure on Vercel
+
+```
+your-project/
+├── server.js          → Handles all /api/* routes
+├── vercel.json        → Vercel configuration
+├── public/            → Served as static files
+│   ├── index.html
+│   ├── app.**js**
+│   ├── style.css
+│   └── ...
+└── package.json       → Dependencies
 ```
 
-## Step 3: Configure Environment Variables
+## Custom Domain (Optional)
 
-**CRITICAL:** You must set the Google Maps API key as an environment variable in Vercel.
-
-### In Vercel Dashboard:
-
-1. Go to your project settings
-2. Navigate to **Settings** → **Environment Variables**
-3. Add a new environment variable:
-   - **Name:** `GOOGLE_MAPS_API_KEY`
-   - **Value:** Your Google Maps API key
-   - **Environment:** Select all (Production, Preview, Development)
-4. Click **Save**
-
-### Via CLI:
-
-```bash
-vercel env add GOOGLE_MAPS_API_KEY
-# Enter your API key when prompted
-```
-
-### After Adding Environment Variables:
-
-**IMPORTANT:** You must redeploy for environment variables to take effect:
-
-```bash
-vercel --prod
-```
-
-Or trigger a new deployment from the Vercel dashboard.
-
-## Step 4: Configure Google Maps API for Vercel
-
-### Domain Restrictions
-
-You need to add your Vercel domain(s) to the Google Maps API key restrictions:
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Navigate to **APIs & Services** → **Credentials**
-3. Click on your API key
-4. Under **Application restrictions**, select **HTTP referrers (web sites)**
-5. Add the following referrers:
-   ```
-   https://your-project-name.vercel.app/*
-   https://*.vercel.app/*
-   ```
-   (Replace `your-project-name` with your actual Vercel project name)
-6. If you have a custom domain:
-   ```
-   https://your-custom-domain.com/*
-   https://www.your-custom-domain.com/*
-   ```
-7. Click **Save**
-
-### API Restrictions
-
-1. Under **API restrictions**, select **Restrict key**
-2. Ensure **Maps JavaScript API** is enabled
-3. Optionally enable **Geocoding API** if you need additional features
-4. Click **Save**
-
-## Step 5: Verify Deployment
-
-1. Visit your Vercel deployment URL (e.g., `https://your-project.vercel.app`)
-2. Open browser developer tools (F12)
-3. Check the Console tab for any errors
-4. The app should:
-   - Load the Google Maps interface
-   - Request location permission
-   - Display satellites on the map
+1. **Go to your project in Vercel Dashboard**
+2. **Settings → Domains**
+3. **Add your domain** (e.g., `satellite-tracker.com`)
+4. **Follow DNS configuration instructions**
 
 ## Troubleshooting
 
-### Map Not Loading
+### API Routes Not Working?
 
-**Issue:** Google Maps doesn't load, shows "This page can't load Google Maps correctly"
+- Check that `vercel.json` is in the root directory
+- Verify `server.js` exports the Express app (`module.exports = app`)
+- Check Vercel deployment logs in the dashboard
 
-**Solutions:**
-1. ✅ Verify `GOOGLE_MAPS_API_KEY` is set in Vercel environment variables
-2. ✅ Check that your Vercel domain is added to Google Maps API key restrictions
-3. ✅ Ensure Maps JavaScript API is enabled in Google Cloud Console
-4. ✅ Redeploy after adding environment variables
-5. ✅ Check browser console for specific error messages
+### Environment Variables Not Working?
 
-### API Key Not Found Error
+- Make sure variables are set for the correct environment (Production/Preview/Development)
+- Redeploy after adding environment variables
+- Check variable names match exactly (case-sensitive)
 
-**Issue:** Frontend shows "Failed to fetch Google Maps API key"
+### Static Files Not Loading?
 
-**Solutions:**
-1. ✅ Verify the environment variable name is exactly `GOOGLE_MAPS_API_KEY`
-2. ✅ Ensure you've redeployed after adding the environment variable
-3. ✅ Check that the `/api/maps/key` endpoint is accessible: `https://your-project.vercel.app/api/maps/key`
-4. ✅ Verify the API function is deployed correctly
+- Verify files are in the `public/` directory
+- Check file paths in HTML (should be relative, e.g., `./style.css`)
+- Clear browser cache
 
-### CORS Errors
+### CORS Errors?
 
-**Issue:** CORS errors when fetching from API
+- The server already has CORS enabled (`app.use(cors())`)
+- If issues persist, check Vercel function logs
 
-**Solutions:**
-- The API functions should handle CORS automatically
-- If issues persist, check that API routes are in the `api/` folder
-- Verify `vercel.json` configuration
+### Google Maps Not Loading?
 
-### Satellites Not Showing
+- Verify `GOOGLE_MAPS_API_KEY` is set in Vercel environment variables
+- Check that the API key has "Maps JavaScript API" enabled
+- Verify the API key is not restricted to specific domains (or add Vercel domain)
 
-**Issue:** Map loads but no satellites appear
+## Updating Your Deployment
 
-**Solutions:**
-1. ✅ Check browser console for API errors
-2. ✅ Verify `/api/positions` endpoint is working: `https://your-project.vercel.app/api/positions?lat=0&lon=0`
-3. ✅ Check network tab to see if API calls are successful
-4. ✅ Ensure KeepTrack.Space API is accessible (external dependency)
+### Automatic Updates
 
-## Project Structure for Vercel
+- **Vercel automatically deploys** when you push to your main branch
+- Each push creates a new preview deployment
+- Production deployments require manual promotion or auto-deploy from main branch
 
-```
-bramhacks/
-├── api/                    # Serverless functions (auto-detected by Vercel)
-│   ├── maps/
-│   │   └── key.js         # Returns Google Maps API key
-│   ├── positions.js        # Computes satellite positions
-│   └── satellites.js      # Fetches satellite data
-├── public/                 # Static files (auto-served by Vercel)
-│   ├── index.html
-│   ├── app.js
-│   ├── style.css
-│   └── models/            # 3D models and assets
-├── vercel.json            # Vercel configuration
-├── package.json
-└── server.js              # NOT USED on Vercel (local dev only)
+### Manual Deployment
+
+```bash
+vercel --prod
 ```
 
-## Important Notes
+## Local Development with Vercel
 
-1. **`server.js` is NOT used on Vercel** - Vercel uses serverless functions from the `api/` folder
-2. **No file system writes** - The API functions don't write files (compatible with serverless)
-3. **Environment variables** - Must be set in Vercel dashboard, not in `.env` file
-4. **Automatic deployments** - Vercel auto-deploys on git push (if connected to repo)
-5. **API routes** - Automatically available at `/api/*` paths
-
-## Testing Locally with Vercel
-
-You can test the Vercel configuration locally:
+Test your Vercel setup locally:
 
 ```bash
 # Install Vercel CLI
-npm i -g vercel
+npm install -g vercel
 
-# Run local development server
+# Run Vercel dev server
 vercel dev
 ```
 
 This will:
-- Use your local environment variables (from `.env`)
-- Simulate the Vercel serverless environment
-- Help debug issues before deploying
+- Start a local server
+- Simulate Vercel's serverless environment
+- Use your local `.env` file for environment variables
 
-## Additional Resources
+## Cost
 
-- [Vercel Documentation](https://vercel.com/docs)
-- [Google Maps API Documentation](https://developers.google.com/maps/documentation/javascript)
-- [Vercel Environment Variables](https://vercel.com/docs/concepts/projects/environment-variables)
+Vercel's free tier includes:
+- ✅ Unlimited deployments
+- ✅ 100GB bandwidth/month
+- ✅ Serverless functions (generous limits)
+- ✅ Custom domains
+- ✅ Automatic HTTPS
+
+Perfect for personal projects and small applications!
+
+## Next Steps
+
+1. ✅ Deploy to Vercel
+2. ✅ Test all functionality
+3. ✅ Set up custom domain (optional)
+4. ✅ Configure automatic deployments
+5. ✅ Monitor usage in Vercel dashboard
 
 ## Support
 
-If you encounter issues:
-1. Check the Vercel deployment logs
-2. Check browser console for errors
-3. Verify all environment variables are set
-4. Ensure Google Maps API key restrictions are correct
+- [Vercel Documentation](https://vercel.com/docs)
+- [Vercel Community](https://github.com/vercel/vercel/discussions)
+- Check deployment logs in Vercel Dashboard → Your Project → Deployments
 
