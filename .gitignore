@@ -19,6 +19,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Vercel
+.vercel
+
 # JSON files
 Selected_satellites.json
 TLE_first_50.json

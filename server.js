@@ -4,12 +4,25 @@ const axios = require('axios');
 const path = require('path');
 const cors = require('cors');
 const fs = require('fs');
+const os = require('os');
 const satellite = require('satellite.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 // Target number of satellites to persist/compute
 const TARGET_COUNT = 50;
+
+// Use /tmp directory on Vercel (read-only filesystem), otherwise use project root
+const DATA_DIR = process.env.VERCEL ? path.join(os.tmpdir(), 'satellite-data') : __dirname;
+
+// Ensure data directory exists (for Vercel /tmp)
+if (process.env.VERCEL && !fs.existsSync(DATA_DIR)) {
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+    } catch (e) {
+        console.warn('Could not create data directory:', e.message);
+    }
+}
 
 // Middleware
 app.use(cors());
@@ -92,7 +105,7 @@ app.get('/api/satellites', async (req, res) => {
                 })
                 .filter(Boolean);
 
-            const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+            const selectionPath = path.join(DATA_DIR, 'Selected_satellites.json');
             let selected = [];
 
             if (fs.existsSync(selectionPath)) {
@@ -176,7 +189,7 @@ app.get('/api/satellites', async (req, res) => {
                     if (err) console.error('Failed to write Selected_satellites.json:', err.message);
                 });
                 const tlePairs = selected.map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
-                fs.writeFile('TLE_first_50.json', JSON.stringify(tlePairs.slice(0, TARGET_COUNT), null, 2), 'utf8', (err) => {
+                fs.writeFile(path.join(DATA_DIR, 'TLE_first_50.json'), JSON.stringify(tlePairs.slice(0, TARGET_COUNT), null, 2), 'utf8', (err) => {
                     if (err) console.error('Failed to write TLE_first_50.json:', err.message);
                 });
                 console.log(`Persistent selection active: ${selected.length} satellites (target ${TARGET_COUNT})`);
@@ -187,11 +200,14 @@ app.get('/api/satellites', async (req, res) => {
             console.error('Error extracting first 50 TLE pairs:', e.message);
         }
 
-        fs.writeFile('APIResponse.txt', JSON.stringify(response.data), 'utf8', (err) => {
-            if (err) {
-                console.error(`ERROR: ${err}`);
-            }
-        })
+        // Skip APIResponse.txt on Vercel (optional debug file)
+        if (!process.env.VERCEL) {
+            fs.writeFile(path.join(DATA_DIR, 'APIResponse.txt'), JSON.stringify(response.data), 'utf8', (err) => {
+                if (err) {
+                    console.error(`ERROR: ${err}`);
+                }
+            });
+        }
 
         // Iterate over the first 50 TLE pairs and compute lat/lon/alt for each
         try {
@@ -199,7 +215,7 @@ app.get('/api/satellites', async (req, res) => {
 
             // Prefer using the TLEs we just extracted; if not available, try reading from file
             try {
-                const filePath = path.join(__dirname, 'TLE_first_50.json');
+                const filePath = path.join(DATA_DIR, 'TLE_first_50.json');
                 if (fs.existsSync(filePath)) {
                     const content = fs.readFileSync(filePath, 'utf8');
                     const parsed = JSON.parse(content);
@@ -283,7 +299,7 @@ app.get('/api/satellites', async (req, res) => {
 
                 // Persist computed positions to a file for reference (still using legacy filename)
                 fs.writeFile(
-                    path.join(__dirname, 'TLE_positions_first_50.json'),
+                    path.join(DATA_DIR, 'TLE_positions_first_50.json'),
                     JSON.stringify(results, null, 2),
                     'utf8',
                     (err) => {
@@ -335,7 +351,7 @@ app.get('/api/maps/key', (req, res) => {
 // Endpoint to serve latest computed satellite positions (up to TARGET_COUNT)
 app.get('/api/positions', async (req, res) => {
     try {
-        const positionsPath = path.join(__dirname, 'TLE_positions_first_50.json');
+        const positionsPath = path.join(DATA_DIR, 'TLE_positions_first_50.json');
 
         // Optional: user location for proximity-based selection
         const latQ = req.query.lat != null ? parseFloat(req.query.lat) : undefined;
@@ -389,7 +405,7 @@ app.get('/api/positions', async (req, res) => {
             // Fallback: use persisted selection or legacy TLE file
             if (!tleCandidates.length) {
                 try {
-                    const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+                    const selectionPath = path.join(DATA_DIR, 'Selected_satellites.json');
                     if (fs.existsSync(selectionPath)) {
                         const parsed = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
                         if (Array.isArray(parsed)) {
@@ -400,7 +416,7 @@ app.get('/api/positions', async (req, res) => {
             }
             if (!tleCandidates.length) {
                 try {
-                    const tlePath = path.join(__dirname, 'TLE_first_50.json');
+                    const tlePath = path.join(DATA_DIR, 'TLE_first_50.json');
                     if (fs.existsSync(tlePath)) {
                         const parsed = JSON.parse(fs.readFileSync(tlePath, 'utf8'));
                         if (Array.isArray(parsed)) {
@@ -506,7 +522,7 @@ app.get('/api/positions', async (req, res) => {
         }
 
         // Prefer computing from persistent Selected_satellites.json
-        const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+        const selectionPath = path.join(DATA_DIR, 'Selected_satellites.json');
         let tlePairs = [];
         if (fs.existsSync(selectionPath)) {
             try {
@@ -522,7 +538,7 @@ app.get('/api/positions', async (req, res) => {
 
         // Fallback to legacy TLE_first_50.json if selection file not available
         if (!tlePairs.length) {
-            const tlePath = path.join(__dirname, 'TLE_first_50.json');
+            const tlePath = path.join(DATA_DIR, 'TLE_first_50.json');
             if (fs.existsSync(tlePath)) {
                 try {
                     const content = fs.readFileSync(tlePath, 'utf8');
@@ -591,7 +607,13 @@ app.get('/api/positions', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-    console.log(`Make sure to set GOOGLE_MAPS_API_KEY in your .env file`);
-});
+// Export the app for Vercel serverless functions
+module.exports = app;
+
+// Only start the server if not in Vercel environment
+if (process.env.VERCEL !== '1') {
+    app.listen(PORT, () => {
+        console.log(`Server is running on http://localhost:${PORT}`);
+        console.log(`Make sure to set GOOGLE_MAPS_API_KEY in your .env file`);
+    });
+}
