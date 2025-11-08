@@ -1,4 +1,6 @@
 {
+  "version": 2,
+  "buildCommand": "npm install",
   "rewrites": [
     {
       "source": "/(.*)",
