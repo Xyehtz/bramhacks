@@ -8,6 +8,8 @@ const satellite = require('satellite.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+// Target number of satellites to persist/compute
+const TARGET_COUNT = 50;
 
 // Middleware
 app.use(cors());
@@ -39,282 +41,521 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Proxy endpoint for satellite data from keeptrack.space
 app.get('/api/satellites', async (req, res) => {
-  try {
-    const { lat, lon } = req.query;
-    
-    if (!lat || !lon) {
-      return res.status(400).json({ error: 'Latitude and longitude are required' });
-    }
-
-    const userLat = parseFloat(lat);
-    const userLon = parseFloat(lon);
-
-    console.log(`Fetching satellites for user location: ${userLat}, ${userLon}`);
-
-    // Fetch satellite data from keeptrack.space API
-    const response = await axios.get('https://api.keeptrack.space/v2/sats', {
-      params: {
-        lat: userLat,
-        lon: userLon,
-        alt: 0 // Ground level
-      },
-      timeout: 10000
-    });
-
-    res.json(response.data);
-
-    // Save the full response for debugging
-    fs.writeFile('APIResponse.txt', JSON.stringify(response.data), 'utf8', (err) => {
-        if (err) {
-            console.error(`ERROR saving APIResponse.txt: ${err}`);
-        }
-    });
-
-    // Extract TLE data from response
     try {
-      const rawData = response.data;
-      let dataArray = [];
-      if (Array.isArray(rawData)) {
-        dataArray = rawData;
-      } else if (rawData && typeof rawData === 'object') {
-        const candidateKeys = ['sats', 'satellites', 'data', 'results', 'items'];
-        for (const key of candidateKeys) {
-          if (Array.isArray(rawData[key])) {
-            dataArray = rawData[key];
-            break;
-          }
+        const { lat, lon } = req.query;
+
+        if (!lat || !lon) {
+            return res.status(400).json({ error: 'Latitude and longitude are required' });
         }
-      }
 
-      // Extract all valid TLE pairs (not just first 50)
-      const allTlePairs = dataArray
-        .map((item, index) => ({
-          index: index,
-          name: item?.name || `Satellite ${index + 1}`,
-          tle1: item?.tle1,
-          tle2: item?.tle2
-        }))
-        .filter(p => p.tle1 && p.tle2);
+        // Fetch satellite data from keeptrack.space API
+        // Using their API endpoint for satellite positions
+        const response = await axios.get('https://api.keeptrack.space/v2/sats', {
+            params: {
+                lat: parseFloat(lat),
+                lon: parseFloat(lon),
+                alt: 0 // Ground level
+            },
+            timeout: 10000
+        });
 
-      if (!allTlePairs.length) {
-        console.warn('No TLE pairs found in response data.');
-        return;
-      }
+        res.json(response.data);
 
-      console.log(`Found ${allTlePairs.length} satellites with valid TLE data`);
-
-      // Calculate positions for all satellites and find nearest 50
-      const now = new Date();
-      const gmst = satellite.gstime(now);
-      const satellitesWithPositions = [];
-
-      console.log('Computing positions for all satellites...');
-      allTlePairs.forEach((pair) => {
+        // Extract first N TLE pairs (tle1, tle2) for logging and saving
         try {
-          const satrec = satellite.twoline2satrec(pair.tle1, pair.tle2);
-          const pv = satellite.propagate(
-            satrec,
-            now.getUTCFullYear(),
-            now.getUTCMonth() + 1,
-            now.getUTCDate(),
-            now.getUTCHours(),
-            now.getUTCMinutes(),
-            now.getUTCSeconds()
-          );
+            const rawData = response.data;
+            let dataArray = [];
+            if (Array.isArray(rawData)) {
+                dataArray = rawData;
+            } else if (rawData && typeof rawData === 'object') {
+                const candidateKeys = ['sats', 'satellites', 'data', 'results', 'items'];
+                for (const key of candidateKeys) {
+                    if (Array.isArray(rawData[key])) {
+                        dataArray = rawData[key];
+                        break;
+                    }
+                }
+            }
 
-          const positionECI = pv && pv.position;
-          if (!positionECI || typeof positionECI.x !== 'number') {
-            return; // Skip invalid positions
-          }
+            // Build list of available TLE items with satnum parsed from TLE line 1
+            const available = dataArray
+                .map(item => {
+                    const tle1 = item?.tle1;
+                    const tle2 = item?.tle2;
+                    if (!tle1 || !tle2) return null;
+                    const match = /^1\s+(\d{5})/.exec(tle1.trim());
+                    const satnum = match ? parseInt(match[1], 10) : undefined;
+                    return satnum ? { satnum, tle1, tle2 } : null;
+                })
+                .filter(Boolean);
 
-          const positionGD = satellite.eciToGeodetic(positionECI, gmst);
-          const longitude = satellite.degreesLong(positionGD.longitude);
-          const latitude = satellite.degreesLat(positionGD.latitude);
-          const altitude = positionGD.height * 1000; // meters
+            const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+            let selected = [];
 
-          // Calculate distance from user location
-          const distance = calculateDistance(userLat, userLon, latitude, longitude);
+            if (fs.existsSync(selectionPath)) {
+                // Load existing persistent selection and refresh their TLEs from current availability
+                try {
+                    const existing = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
+                    if (Array.isArray(existing)) {
+                        const availMap = new Map(available.map(a => [a.satnum, a]));
+                        selected = existing.map(rec => {
+                            const upd = availMap.get(rec.satnum);
+                            return upd ? { ...rec, tle1: upd.tle1, tle2: upd.tle2, updatedAt: new Date().toISOString() } : rec;
+                        });
+                    }
+                } catch (e) {
+                    console.warn('Failed to read Selected_satellites.json, reinitializing from current data:', e.message);
+                }
+            }
 
-          satellitesWithPositions.push({
-            name: pair.name,
-            index: pair.index,
-            tle1: pair.tle1,
-            tle2: pair.tle2,
-            latitude,
-            longitude,
-            altitude,
-            distance
-          });
-        } catch (perSatErr) {
-          // Skip satellites that fail to propagate
-          console.warn(`Failed to compute position for ${pair.name}: ${perSatErr.message}`);
+            // If we already have a selection but it's smaller than TARGET_COUNT, top it up deterministically
+            if (selected.length && selected.length < TARGET_COUNT) {
+                try {
+                    const have = new Set(selected.map(s => s.satnum));
+                    // Sort available by satnum ascending for deterministic append
+                    const sortedAvail = available
+                        .filter(a => !have.has(a.satnum))
+                        .sort((a, b) => a.satnum - b.satnum);
+                    let idx = selected.length;
+                    for (const rec of sortedAvail) {
+                        selected.push({
+                            index: ++idx,
+                            satnum: rec.satnum,
+                            tle1: rec.tle1,
+                            tle2: rec.tle2,
+                            selectedAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString()
+                        });
+                        if (selected.length >= TARGET_COUNT) break;
+                    }
+                } catch (topUpErr) {
+                    console.warn('Failed to top up selection:', topUpErr.message);
+                }
+            }
+
+            if (!selected.length) {
+                // Initialize a deterministic selection: first TARGET_COUNT by satnum ascending
+                const uniqueBySatnum = new Map();
+                for (const item of available) {
+                    if (!uniqueBySatnum.has(item.satnum)) uniqueBySatnum.set(item.satnum, item);
+                    if (uniqueBySatnum.size >= TARGET_COUNT) break;
+                }
+                selected = Array.from(uniqueBySatnum.values())
+                    .sort((a, b) => a.satnum - b.satnum)
+                    .slice(0, TARGET_COUNT)
+                    .map((rec, idx) => ({ index: idx + 1, satnum: rec.satnum, tle1: rec.tle1, tle2: rec.tle2, selectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
+            }
+
+            if (selected.length) {
+                // Persist the stable selection and a convenience TLE_first_50.json reflecting the selection only (may contain up to TARGET_COUNT entries)
+                fs.writeFile(selectionPath, JSON.stringify(selected, null, 2), 'utf8', (err) => {
+                    if (err) console.error('Failed to write Selected_satellites.json:', err.message);
+                });
+                const tlePairs = selected.map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
+                fs.writeFile('TLE_first_50.json', JSON.stringify(tlePairs.slice(0, TARGET_COUNT), null, 2), 'utf8', (err) => {
+                    if (err) console.error('Failed to write TLE_first_50.json:', err.message);
+                });
+                console.log(`Persistent selection active: ${selected.length} satellites (target ${TARGET_COUNT})`);
+            } else {
+                console.warn('No TLE pairs available to persist selection.');
+            }
+        } catch (e) {
+            console.error('Error extracting first 50 TLE pairs:', e.message);
         }
-      });
 
-      console.log(`Successfully computed positions for ${satellitesWithPositions.length} satellites`);
+        fs.writeFile('APIResponse.txt', JSON.stringify(response.data), 'utf8', (err) => {
+            if (err) {
+                console.error(`ERROR: ${err}`);
+            }
+        })
 
-      // Sort by distance and take the nearest 50
-      const nearest = satellitesWithPositions
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, 50); // EDIT to change number of satellites saved
+        // Iterate over the first 50 TLE pairs and compute lat/lon/alt for each
+        try {
+            let tlePairsForCalc = [];
 
-      console.log(`Selected 50 nearest satellites (closest: ${(nearest[0]?.distance / 1000).toFixed(2)} km)`);
+            // Prefer using the TLEs we just extracted; if not available, try reading from file
+            try {
+                const filePath = path.join(__dirname, 'TLE_first_50.json');
+                if (fs.existsSync(filePath)) {
+                    const content = fs.readFileSync(filePath, 'utf8');
+                    const parsed = JSON.parse(content);
+                    if (Array.isArray(parsed)) {
+                        tlePairsForCalc = parsed;
+                    }
+                }
+            } catch (readErr) {
+                console.warn('Could not read TLE_first_50.json, falling back to response data:', readErr.message);
+            }
 
-      // Save the nearest 50 TLE pairs
-      const tlePairsToSave = nearest.map(sat => ({
-        name: sat.name,
-        tle1: sat.tle1,
-        tle2: sat.tle2
-      }));
+            // Fallback: derive from current response if file was not available or empty
+            if (!tlePairsForCalc.length) {
+                const rawData = response.data;
+                let dataArray = [];
+                if (Array.isArray(rawData)) {
+                    dataArray = rawData;
+                } else if (rawData && typeof rawData === 'object') {
+                    const candidateKeys = ['sats', 'satellites', 'data', 'results', 'items'];
+                    for (const key of candidateKeys) {
+                        if (Array.isArray(rawData[key])) {
+                            dataArray = rawData[key];
+                            break;
+                        }
+                    }
+                }
+                tlePairsForCalc = dataArray.slice(0, TARGET_COUNT).map(item => ({
+                    tle1: item?.tle1,
+                    tle2: item?.tle2
+                })).filter(p => p.tle1 && p.tle2);
+            }
 
-      fs.writeFile(
-        'TLE_first_50.json',
-        JSON.stringify(tlePairsToSave, null, 2),
-        'utf8',
-        (err) => {
-          if (err) {
-            console.error('Failed to write TLE_first_50.json:', err.message);
-          } else {
-            console.log('Saved nearest 50 TLE pairs to TLE_first_50.json');
-          }
+            if (!tlePairsForCalc.length) {
+                console.warn('No TLE pairs available to compute positions.');
+            } else {
+                const now = new Date();
+                const gmst = satellite.gstime(now);
+                const results = [];
+
+                console.log(`Computing positions for up to ${TARGET_COUNT} TLE pairs...`);
+                tlePairsForCalc.slice(0, TARGET_COUNT).forEach((pair, idx) => {
+                    try {
+                        const satrec = satellite.twoline2satrec(pair.tle1, pair.tle2);
+                        const pv = satellite.propagate(
+                            satrec,
+                            now.getUTCFullYear(),
+                            now.getUTCMonth() + 1,
+                            now.getUTCDate(),
+                            now.getUTCHours(),
+                            now.getUTCMinutes(),
+                            now.getUTCSeconds()
+                        );
+
+                        const positionECI = pv && pv.position;
+                        if (!positionECI) throw new Error('No ECI position from propagate');
+
+                        const positionGD = satellite.eciToGeodetic(positionECI, gmst);
+                        const longitude = satellite.degreesLong(positionGD.longitude);
+                        const latitude = satellite.degreesLat(positionGD.latitude);
+                        const altitude = positionGD.height * 1000; // meters
+
+                        // derive satnum from TLE line 1
+                        const match = /^1\s+(\d{5})/.exec((pair.tle1 || '').trim());
+                        const satnum = match ? parseInt(match[1], 10) : undefined;
+
+                        results.push({
+                            index: idx + 1,
+                            satnum,
+                            tle1: pair.tle1,
+                            tle2: pair.tle2,
+                            latitude,
+                            longitude,
+                            altitude
+                        });
+
+                        console.log(`Sat #${idx + 1}: lat=${latitude.toFixed(6)}, lon=${longitude.toFixed(6)}, alt_m=${Math.round(altitude)}`);
+                    } catch (perSatErr) {
+                        console.warn(`Failed to compute position for pair #${idx + 1}: ${perSatErr.message}`);
+                    }
+                });
+
+                // Persist computed positions to a file for reference (still using legacy filename)
+                fs.writeFile(
+                    path.join(__dirname, 'TLE_positions_first_50.json'),
+                    JSON.stringify(results, null, 2),
+                    'utf8',
+                    (err) => {
+                        if (err) {
+                            console.error('Failed to write TLE_positions_first_50.json:', err.message);
+                        }
+                    }
+                );
+            }
+        } catch (calcErr) {
+            console.error('Error iterating over TLE pairs to compute positions:', calcErr.message);
         }
-      );
+    } catch (error) {
+        console.error('Error fetching satellite data:', error.message);
 
-      // Save the computed positions for the nearest 50
-      const positionsToSave = nearest.map((sat, idx) => ({
-        index: idx + 1,
-        name: sat.name,
-        tle1: sat.tle1,
-        tle2: sat.tle2,
-        latitude: sat.latitude,
-        longitude: sat.longitude,
-        altitude: sat.altitude,
-        distance: sat.distance
-      }));
-
-      fs.writeFile(
-        path.join(__dirname, 'TLE_positions_first_50.json'),
-        JSON.stringify(positionsToSave, null, 2),
-        'utf8',
-        (err) => {
-          if (err) {
-            console.error('Failed to write TLE_positions_first_50.json:', err.message);
-          } else {
-            console.log('Saved nearest 50 positions to TLE_positions_first_50.json');
-            // Log first few for verification
-            console.log('\nNearest satellites:');
-            positionsToSave.slice(0, 5).forEach(sat => {
-              console.log(`  ${sat.name}: ${(sat.distance / 1000).toFixed(2)} km away`);
+        // Fallback: try alternative endpoint or return sample data structure
+        try {
+            // Alternative: try getting TLE data and calculate positions
+            const tleResponse = await axios.get('https://api.keeptrack.space/v2/tle', {
+                timeout: 10000
             });
-          }
+
+            // If we get TLE data, we'd need to calculate positions
+            // For now, return a structure that the frontend can handle
+            res.json({ satellites: [], error: 'Position calculation needed' });
+        } catch (fallbackError) {
+            res.status(500).json({
+                error: 'Failed to fetch satellite data',
+                message: error.message
+            });
         }
-      );
-
-    } catch (e) {
-      console.error('Error processing TLE data:', e.message);
     }
-
-  } catch (error) {
-    console.error('Error fetching satellite data:', error.message);
-    
-    // Fallback: try alternative endpoint
-    try {
-      const tleResponse = await axios.get('https://api.keeptrack.space/v2/tle', {
-        timeout: 10000
-      });
-      
-      res.json({ satellites: [], error: 'Position calculation needed' });
-    } catch (fallbackError) {
-      res.status(500).json({ 
-        error: 'Failed to fetch satellite data',
-        message: error.message 
-      });
-    }
-  }
 });
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
+    res.json({ status: 'ok' });
 });
 
 // Endpoint to serve Google Maps API key securely
 app.get('/api/maps/key', (req, res) => {
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: 'Google Maps API key not configured' });
-  }
-  res.json({ key: apiKey });
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+        return res.status(500).json({ error: 'Google Maps API key not configured' });
+    }
+    res.json({ key: apiKey });
 });
 
-// Endpoint to serve latest computed satellite positions (nearest 50)
+// Endpoint to serve latest computed satellite positions (up to TARGET_COUNT)
 app.get('/api/positions', async (req, res) => {
-  try {
-    const positionsPath = path.join(__dirname, 'TLE_positions_first_50.json');
-    
-    // If positions file exists, return it (will be recalculated on next /api/satellites call)
-    if (fs.existsSync(positionsPath)) {
-      try {
-        const content = fs.readFileSync(positionsPath, 'utf8');
-        const data = JSON.parse(content);
-        if (Array.isArray(data) && data.length) {
-          // Recalculate current positions using stored TLEs
-          const now = new Date();
-          const gmst = satellite.gstime(now);
-          const updatedPositions = [];
+    try {
+        const positionsPath = path.join(__dirname, 'TLE_positions_first_50.json');
 
-          data.forEach((sat) => {
+        // Optional: user location for proximity-based selection
+        const latQ = req.query.lat != null ? parseFloat(req.query.lat) : undefined;
+        const lonQ = req.query.lon != null ? parseFloat(req.query.lon) : undefined;
+        const hasUserLoc = Number.isFinite(latQ) && Number.isFinite(lonQ);
+
+        // If we have a user location, try to compute from freshest wide set, then filter by distance
+        if (hasUserLoc) {
+            // Helper: haversine distance in meters
+            const R = 6371e3;
+            const toRad = (d) => (d * Math.PI) / 180;
+            const haversine = (lat1, lon1, lat2, lon2) => {
+                const dLat = toRad(lat2 - lat1);
+                const dLon = toRad(lon2 - lon1);
+                const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return R * c;
+            };
+
+            let tleCandidates = [];
             try {
-              const satrec = satellite.twoline2satrec(sat.tle1, sat.tle2);
-              const pv = satellite.propagate(
-                satrec,
-                now.getUTCFullYear(),
-                now.getUTCMonth() + 1,
-                now.getUTCDate(),
-                now.getUTCHours(),
-                now.getUTCMinutes(),
-                now.getUTCSeconds()
-              );
-              const positionECI = pv && pv.position;
-              if (!positionECI) return;
-              
-              const positionGD = satellite.eciToGeodetic(positionECI, gmst);
-              const longitude = satellite.degreesLong(positionGD.longitude);
-              const latitude = satellite.degreesLat(positionGD.latitude);
-              const altitude = positionGD.height * 1000; // meters
-
-              updatedPositions.push({
-                index: sat.index,
-                name: sat.name,
-                lat: latitude,
-                lng: longitude,
-                altitude: altitude
-              });
-            } catch (err) {
-              // Skip satellites that fail
+                // Prefer fresh data directly from keeptrack API for widest availability
+                const apiResp = await axios.get('https://api.keeptrack.space/v2/sats', {
+                    params: { lat: latQ, lon: lonQ, alt: 0 },
+                    timeout: 10000,
+                });
+                const raw = apiResp.data;
+                let arr = Array.isArray(raw) ? raw : [];
+                if (!arr.length && raw && typeof raw === 'object') {
+                    const keys = ['sats', 'satellites', 'data', 'results', 'items'];
+                    for (const k of keys) {
+                        if (Array.isArray(raw[k])) { arr = raw[k]; break; }
+                    }
+                }
+                tleCandidates = arr
+                    .map(item => {
+                        const tle1 = item?.tle1; const tle2 = item?.tle2;
+                        if (!tle1 || !tle2) return null;
+                        const m = /^1\s+(\d{5})/.exec(String(tle1).trim());
+                        const satnum = m ? parseInt(m[1], 10) : undefined;
+                        return { satnum, tle1, tle2 };
+                    })
+                    .filter(p => p && p.tle1 && p.tle2);
+            } catch (freshErr) {
+                console.warn('Fresh fetch in /api/positions failed, falling back to persisted TLEs:', freshErr.message);
             }
-          });
 
-          const positions = updatedPositions.filter(p => isFinite(p.lat) && isFinite(p.lng));
-          return res.json({ positions });
+            // Fallback: use persisted selection or legacy TLE file
+            if (!tleCandidates.length) {
+                try {
+                    const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+                    if (fs.existsSync(selectionPath)) {
+                        const parsed = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
+                        if (Array.isArray(parsed)) {
+                            tleCandidates = parsed.map(s => ({ satnum: s.satnum, tle1: s.tle1, tle2: s.tle2 }));
+                        }
+                    }
+                } catch {}
+            }
+            if (!tleCandidates.length) {
+                try {
+                    const tlePath = path.join(__dirname, 'TLE_first_50.json');
+                    if (fs.existsSync(tlePath)) {
+                        const parsed = JSON.parse(fs.readFileSync(tlePath, 'utf8'));
+                        if (Array.isArray(parsed)) {
+                            tleCandidates = parsed.map((s) => ({ satnum: undefined, tle1: s.tle1, tle2: s.tle2 }));
+                        }
+                    }
+                } catch {}
+            }
+
+            if (!tleCandidates.length) {
+                return res.status(404).json({ error: 'No TLE data available to compute positions yet. Hit /api/satellites first to generate files.' });
+            }
+
+            const now = new Date();
+            const gmst = satellite.gstime(now);
+            const results = [];
+            for (let idx = 0; idx < tleCandidates.length; idx++) {
+                const pair = tleCandidates[idx];
+                try {
+                    const satrec = satellite.twoline2satrec(pair.tle1, pair.tle2);
+                    const pv = satellite.propagate(
+                        satrec,
+                        now.getUTCFullYear(),
+                        now.getUTCMonth() + 1,
+                        now.getUTCDate(),
+                        now.getUTCHours(),
+                        now.getUTCMinutes(),
+                        now.getUTCSeconds()
+                    );
+                    const positionECI = pv && pv.position;
+                    if (!positionECI) continue;
+                    const positionGD = satellite.eciToGeodetic(positionECI, gmst);
+                    const longitude = satellite.degreesLong(positionGD.longitude);
+                    const latitude = satellite.degreesLat(positionGD.latitude);
+                    const altitude = positionGD.height * 1000; // meters
+                    const dist = haversine(latQ, lonQ, latitude, longitude);
+                    results.push({ index: idx + 1, satnum: pair.satnum, tle1: pair.tle1, tle2: pair.tle2, latitude, longitude, altitude, distance: dist });
+                } catch {}
+            }
+
+            // Sort by distance and take closest TARGET_COUNT
+            results.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+            const top = results.slice(0, TARGET_COUNT);
+
+            // Persist and return normalized response
+            try {
+                fs.writeFileSync(positionsPath, JSON.stringify(top, null, 2), 'utf8');
+            } catch (e) {
+                console.warn('Failed to persist TLE_positions_first_50.json:', e.message);
+            }
+
+            const positions = top.map(p => ({
+                index: p.index,
+                satnum: p.satnum,
+                lat: p.latitude,
+                lng: p.longitude,
+                altitude: p.altitude,
+                distance: p.distance,
+                tle1: p.tle1,
+                tle2: p.tle2,
+            })).filter(p => isFinite(p.lat) && isFinite(p.lng));
+
+            return res.json({ positions });
         }
-      } catch (e) {
-        console.warn('Could not parse existing TLE_positions_first_50.json:', e.message);
-      }
+
+        // No user location: keep previous behavior and return last computed or recomputed set (up to TARGET_COUNT)
+        // If positions file exists and is parseable, return it
+        if (fs.existsSync(positionsPath)) {
+            try {
+                const content = fs.readFileSync(positionsPath, 'utf8');
+                const data = JSON.parse(content);
+                if (Array.isArray(data) && data.length) {
+                    const positions = data.map(p => {
+                        let satnum = p.satnum;
+                        if (!satnum && p.tle1) {
+                            const m = /^1\s+(\d{5})/.exec(String(p.tle1).trim());
+                            satnum = m ? parseInt(m[1], 10) : undefined;
+                        }
+                        return ({
+                            index: p.index,
+                            satnum,
+                            lat: p.latitude,
+                            lng: p.longitude,
+                            altitude: p.altitude,
+                            tle1: p.tle1,
+                            tle2: p.tle2
+                        });
+                    }).filter(p => isFinite(p.lat) && isFinite(p.lng));
+                    return res.json({ positions });
+                }
+            } catch (e) {
+                console.warn('Could not parse existing TLE_positions_first_50.json, will attempt to (re)compute:', e.message);
+            }
+        }
+
+        // Prefer computing from persistent Selected_satellites.json
+        const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+        let tlePairs = [];
+        if (fs.existsSync(selectionPath)) {
+            try {
+                const content = fs.readFileSync(selectionPath, 'utf8');
+                const parsed = JSON.parse(content);
+                if (Array.isArray(parsed)) {
+                    tlePairs = parsed.slice(0, TARGET_COUNT).map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
+                }
+            } catch (e) {
+                console.warn('Failed to read/parse Selected_satellites.json, will try TLE_first_50.json fallback:', e.message);
+            }
+        }
+
+        // Fallback to legacy TLE_first_50.json if selection file not available
+        if (!tlePairs.length) {
+            const tlePath = path.join(__dirname, 'TLE_first_50.json');
+            if (fs.existsSync(tlePath)) {
+                try {
+                    const content = fs.readFileSync(tlePath, 'utf8');
+                    const parsed = JSON.parse(content);
+                    if (Array.isArray(parsed)) {
+                        tlePairs = parsed.slice(0, TARGET_COUNT);
+                    }
+                } catch (e) {
+                    console.warn('Failed to read/parse TLE_first_50.json:', e.message);
+                }
+            }
+        }
+
+        if (!tlePairs.length) {
+            return res.status(404).json({ error: 'No TLE data available to compute positions yet. Hit /api/satellites first to generate files.' });
+        }
+
+        const now = new Date();
+        const gmst = satellite.gstime(now);
+        const results = [];
+        tlePairs.forEach((pair, idx) => {
+            try {
+                const satrec = satellite.twoline2satrec(pair.tle1, pair.tle2);
+                const pv = satellite.propagate(
+                    satrec,
+                    now.getUTCFullYear(),
+                    now.getUTCMonth() + 1,
+                    now.getUTCDate(),
+                    now.getUTCHours(),
+                    now.getUTCMinutes(),
+                    now.getUTCSeconds()
+                );
+                const positionECI = pv && pv.position;
+                if (!positionECI) return;
+                const positionGD = satellite.eciToGeodetic(positionECI, gmst);
+                const longitude = satellite.degreesLong(positionGD.longitude);
+                const latitude = satellite.degreesLat(positionGD.latitude);
+                const altitude = positionGD.height * 1000; // meters
+                results.push({ index: idx + 1, tle1: pair.tle1, tle2: pair.tle2, latitude, longitude, altitude });
+            } catch (err) {
+                // skip bad pair
+            }
+        });
+
+        // Persist and return normalized response
+        try {
+            fs.writeFileSync(positionsPath, JSON.stringify(results, null, 2), 'utf8');
+        } catch (e) {
+            console.warn('Failed to persist TLE_positions_first_50.json:', e.message);
+        }
+
+        const positions = results.map(p => ({
+            index: p.index,
+            satnum: p.satnum,
+            lat: p.latitude,
+            lng: p.longitude,
+            altitude: p.altitude,
+            tle1: p.tle1,
+            tle2: p.tle2
+        })).filter(p => isFinite(p.lat) && isFinite(p.lng));
+
+        res.json({ positions });
+    } catch (e) {
+        console.error('/api/positions error:', e.message);
+        res.status(500).json({ error: 'Failed to get positions', message: e.message });
     }
-
-    // If no cached positions, return error asking user to initialize
-    return res.status(404).json({ 
-      error: 'No satellite data available yet. Please wait for initial data load.' 
-    });
-
-  } catch (e) {
-    console.error('/api/positions error:', e.message);
-    res.status(500).json({ error: 'Failed to get positions', message: e.message });
-  }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
-  console.log(`Make sure to set GOOGLE_MAPS_API_KEY in your .env file`);
+    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`Make sure to set GOOGLE_MAPS_API_KEY in your .env file`);
 });
