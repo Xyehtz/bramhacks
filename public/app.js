@@ -1,3 +1,4 @@
+// Test commit for app.js
 // Configuration
 const UPDATE_INTERVAL = 30000; // 30 seconds
 const OVERHEAD_THRESHOLD = 500000; // 500 km in meters
