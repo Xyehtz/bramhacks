@@ -48,7 +48,12 @@ window.initThreeJS = function() {
     loadingEl.style.transform = 'translate(-50%, -50%)';
     loadingEl.style.pointerEvents = 'none';
     loadingEl.style.zIndex = '10';
+    loadingEl.style.textAlign = 'center';
+    loadingEl.style.width = '100%';
+    loadingEl.style.padding = '0 20px';
     loadingEl.textContent = 'Loading 3D model...';
+    // Make sure the container is relatively positioned
+    container.style.position = 'relative';
     container.appendChild(loadingEl);
 
     // Lighting
@@ -59,8 +64,8 @@ window.initThreeJS = function() {
         directionalLight.position.set(5, 5, 5);
         scene.add(directionalLight);
 
-    // Position camera (moved slightly back and up for a better view)
-    camera.position.set(0, 1, 3);
+    // Position camera to view model from front
+    camera.position.set(0, 0, 3);
     camera.lookAt(0, 0, 0);
 
     // Add OrbitControls
@@ -102,10 +107,10 @@ window.initThreeJS = function() {
                 const scale = 1.5 / maxDim;
                 model.scale.multiplyScalar(scale);
                 
-                // Adjust model position to sit nicely in view
+                // Add model to scene at centered position
                 const sizeAfter = box.getSize(new THREE.Vector3()).multiplyScalar(model.scale.x);
                 console.log('Model size before adjust:', box.getSize(new THREE.Vector3()), 'scaled approx:', sizeAfter);
-                model.position.y = 0.5;
+                model.position.y = 0; // Keep model centered
                 
                 scene.add(model);
                 
