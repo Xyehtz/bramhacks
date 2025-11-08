@@ -1,3 +1,4 @@
+// Test commit for app.js
 // Configuration
 const UPDATE_INTERVAL = 30000; // 30 seconds
 const OVERHEAD_THRESHOLD = 500000; // 500 km in meters
@@ -5,7 +6,9 @@ const OVERHEAD_THRESHOLD = 500000; // 500 km in meters
 // Global variables
 let map;
 let userMarker;
-let satelliteMarkers = [];
+let satelliteMarkers = new Map(); // key: sat id (satnum preferred), value: { marker, data }
+let infoWindow = null;
+let openSatId = null; // persist which card is open across refreshes
 let userLocation = null;
 let updateInterval = null;
 let isTracking = false;
@@ -287,46 +290,81 @@ async function fetchSatellitesFallback(location) {
 
 function displaySatellites(satellites, userLocation) {
     let overheadCount = 0;
-    const infoWindow = new google.maps.InfoWindow();
 
-    satellites.forEach((satellite) => {
+    // Ensure a single, persistent InfoWindow
+    if (!infoWindow) {
+        infoWindow = new google.maps.InfoWindow();
+    }
+
+    // Build a set of incoming satellite IDs for reconciliation
+    const incomingIds = new Set();
+
+    satellites.forEach((satellite, idx) => {
         // Extract position
         const lat = satellite.lat || satellite.latitude;
         const lng = satellite.lng || satellite.longitude || satellite.long;
-        
         if (lat === undefined || lng === undefined) return;
 
         const satPosition = { lat: parseFloat(lat), lng: parseFloat(lng) };
 
-        // Create marker
-        const marker = new google.maps.Marker({
-            position: satPosition,
-            map: map,
-            title: satellite.name || 'Satellite',
-            icon: {
-                path: google.maps.SymbolPath.CIRCLE,
-                scale: 6,
-                fillColor: '#FF0000',
-                fillOpacity: 0.8,
-                strokeColor: '#ffffff',
-                strokeWeight: 2
+        // Compute a stable id for this satellite
+        const satId = satellite.satnum ?? satellite.id ?? satellite.name ?? `${satPosition.lat.toFixed(4)},${satPosition.lng.toFixed(4)}`;
+        incomingIds.add(String(satId));
+
+        // Update existing marker or create a new one
+        const existing = satelliteMarkers.get(String(satId));
+        if (existing && existing.marker) {
+            existing.marker.setPosition(satPosition);
+            existing.data = satellite;
+        } else {
+            const marker = new google.maps.Marker({
+                position: satPosition,
+                map: map,
+                title: satellite.name || `Satellite ${idx + 1}`,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 6,
+                    fillColor: '#FF0000',
+                    fillOpacity: 0.8,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 2
+                }
+            });
+
+            // Add click listener for info and remember which card is open
+            marker.addListener('click', () => {
+                const content = `
+                    <div style="padding: 10px;">
+                        <h3 style="margin: 0 0 10px 0;">${satellite.name || 'Satellite'}</h3>
+                        ${satellite.altitude ? `<p><strong>Altitude:</strong> ${satellite.altitude.toFixed(4)} km</p>` : ''}
+                        <p><strong>Position:</strong> ${parseFloat(lat).toFixed(4)}°, ${parseFloat(lng).toFixed(4)}°</p>
+                        ${satellite.satnum ? `<p><strong>NORAD ID:</strong> ${satellite.satnum}</p>` : ''}
+                    </div>
+                `;
+                infoWindow.setContent(content);
+                infoWindow.open(map, marker);
+                openSatId = String(satId);
+            });
+
+            satelliteMarkers.set(String(satId), { marker, data: satellite });
+        }
+
+        // If this card is currently open, keep it open with updated content
+        if (openSatId && String(satId) === String(openSatId)) {
+            const m = satelliteMarkers.get(String(satId))?.marker;
+            if (m) {
+                const content = `
+                    <div style="padding: 10px;">
+                        <h3 style="margin: 0 0 10px 0;">${satellite.name || 'Satellite'}</h3>
+                        ${satellite.altitude ? `<p><strong>Altitude:</strong> ${satellite.altitude.toFixed(4)} km</p>` : ''}
+                        <p><strong>Position:</strong> ${parseFloat(lat).toFixed(4)}°, ${parseFloat(lng).toFixed(4)}°</p>
+                        ${satellite.satnum ? `<p><strong>NORAD ID:</strong> ${satellite.satnum}</p>` : ''}
+                    </div>
+                `;
+                infoWindow.setContent(content);
+                infoWindow.open(map, m);
             }
-        });
-
-        // Add click listener for info
-        marker.addListener('click', () => {
-            const content = `
-                <div style="padding: 10px;">
-                    <h3 style="margin: 0 0 10px 0;">${satellite.name || 'Satellite'}</h3>
-                    ${satellite.altitude ? `<p><strong>Altitude:</strong> ${satellite.altitude} km</p>` : ''}
-                    <p><strong>Position:</strong> ${lat.toFixed(4)}°, ${lng.toFixed(4)}°</p>
-                </div>
-            `;
-            infoWindow.setContent(content);
-            infoWindow.open(map, marker);
-        });
-
-        satelliteMarkers.push(marker);
+        }
 
         // Check if satellite is overhead
         if (google.maps.geometry && google.maps.geometry.spherical) {
@@ -335,21 +373,30 @@ function displaySatellites(satellites, userLocation) {
                 new google.maps.LatLng(satPosition.lat, satPosition.lng)
             );
 
-            // Consider satellite overhead if within threshold
-            // Also check if it's roughly above (within reasonable lat/lng range)
             const latDiff = Math.abs(userLocation.lat - satPosition.lat);
             const lngDiff = Math.abs(userLocation.lng - satPosition.lng);
-            
             if (distance < OVERHEAD_THRESHOLD && latDiff < 5 && lngDiff < 5) {
                 overheadCount++;
             }
         }
     });
 
-    // Update satellite count
-    document.getElementById('satelliteCount').textContent = satellites.length;
+    // Remove markers that are no longer present
+    for (const [id, entry] of satelliteMarkers.entries()) {
+        if (!incomingIds.has(id)) {
+            entry.marker.setMap(null);
+            satelliteMarkers.delete(id);
+            if (openSatId && String(openSatId) === String(id)) {
+                openSatId = null; // closed because satellite disappeared
+            }
+        }
+    }
 
-    // Show notification if satellites are overhead
+    // Update satellite count using the Map size
+    const countEl = document.getElementById('satelliteCount');
+    if (countEl) countEl.textContent = satelliteMarkers.size;
+
+    // Show/hide overhead notification
     if (overheadCount > 0) {
         showNotification(overheadCount);
     } else {
@@ -358,8 +405,15 @@ function displaySatellites(satellites, userLocation) {
 }
 
 function clearSatelliteMarkers() {
-    satelliteMarkers.forEach(marker => marker.setMap(null));
-    satelliteMarkers = [];
+    if (satelliteMarkers instanceof Map) {
+        for (const [, entry] of satelliteMarkers.entries()) {
+            if (entry && entry.marker) entry.marker.setMap(null);
+        }
+        satelliteMarkers.clear();
+    } else if (Array.isArray(satelliteMarkers)) {
+        satelliteMarkers.forEach(marker => marker.setMap(null));
+        satelliteMarkers = [];
+    }
 }
 
 function showNotification(count) {
@@ -424,14 +478,12 @@ async function fetchPositions() {
                 console.warn('Priming /api/satellites failed (continuing):', e);
             }
         }
-        const resp = await fetch('/api/positions');
+        const positionsUrl = userLocation ? `/api/positions?lat=${userLocation.lat}&lon=${userLocation.lng}` : '/api/positions';
+        const resp = await fetch(positionsUrl);
         const json = await resp.json();
         if (!resp.ok) {
             throw new Error(json.error || 'Failed to fetch positions');
         }
-
-        // Clear existing markers before rendering new ones
-        clearSatelliteMarkers();
 
         // Normalize response
         let positions = [];
@@ -441,15 +493,19 @@ async function fetchPositions() {
             positions = json.positions;
         }
 
-        // Map to the shape expected by displaySatellites()
+        // Map to the shape expected by displaySatellites(); include stable id
         const satellites = positions
             .filter(p => isFinite(p.lat) && isFinite(p.lng))
             .map((p, idx) => ({
+                id: p.satnum ?? p.index ?? (p.tle1 ? (String(p.tle1).slice(2,7)) : idx + 1),
                 name: p.name || `Satellite ${p.index ?? (idx + 1)}`,
                 lat: parseFloat(p.lat),
                 lng: parseFloat(p.lng),
                 // Backend altitude is meters; convert to km for display
-                altitude: typeof p.altitude === 'number' ? (p.altitude / 1000) : undefined
+                altitude: typeof p.altitude === 'number' ? (p.altitude / 1000) : undefined,
+                satnum: p.satnum,
+                tle1: p.tle1,
+                tle2: p.tle2
             }));
 
         if (satellites.length > 0) {
