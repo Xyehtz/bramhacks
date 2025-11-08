@@ -24,7 +24,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         // Fetch Google Maps API key from server
         const response = await fetch('/api/maps/key');
-        const responseText = await response.text(); // Get raw response text first
         
         if (!response.ok) {
             console.error('Server response:', responseText);
