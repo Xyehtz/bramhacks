@@ -7,8 +7,8 @@ const OVERHEAD_THRESHOLD = 500000; // 500 km in meters
 let map;
 let userMarker;
 let satelliteMarkers = new Map(); // key: sat id (satnum preferred), value: { marker, data }
-let infoWindow = null;
-let openSatId = null; // persist which card is open across refreshes
+let selectedSatId = null; // persist which satellite is selected across refreshes
+const lastSamples = new Map(); // satId -> { lat, lng, timeMs, altitudeKm }
 let userLocation = null;
 let updateInterval = null;
 let isTracking = false;
@@ -76,6 +76,20 @@ function setupEventListeners() {
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
             if (userLocation) {
+                refreshBtn.disabled = true;
+                let timeLeft = 30;
+                const originalText = refreshBtn.textContent;
+                
+                const timer = setInterval(() => {
+                    refreshBtn.textContent = `Wait ${timeLeft}s`;
+                    timeLeft--;
+                    if (timeLeft < 0) {
+                        clearInterval(timer);
+                        refreshBtn.disabled = false;
+                        refreshBtn.textContent = originalText;
+                    }
+                }, 1000);
+
                 fetchPositions();
             }
         });
@@ -323,13 +337,45 @@ async function fetchSatellitesFallback(location) {
 function displaySatellites(satellites, userLocation) {
     let overheadCount = 0;
 
-    // Ensure a single, persistent InfoWindow
-    if (!infoWindow) {
-        infoWindow = new google.maps.InfoWindow();
-    }
-
     // Build a set of incoming satellite IDs for reconciliation
     const incomingIds = new Set();
+
+    // Helper to update the side panel
+    const panel = {
+        container: document.getElementById('satelliteInfo'),
+        name: document.getElementById('satelliteName'),
+        altitude: document.getElementById('satelliteAltitude'),
+        velocity: document.getElementById('satelliteVelocity'),
+        country: document.getElementById('satelliteCountry'),
+        launch: document.getElementById('satelliteLaunch')
+    };
+
+    const showPanel = (sat) => {
+        if (!panel.container) return;
+        panel.container.classList.remove('hidden');
+        if (panel.name) panel.name.textContent = sat.name || (sat.satnum ? `SAT ${sat.satnum}` : 'Satellite');
+        if (panel.altitude) panel.altitude.textContent = typeof sat.altitude === 'number' ? sat.altitude.toFixed(2) : 'N/A';
+        if (panel.country) {
+            const cc = (sat.country || '').toString().trim();
+            const full = cc ? countryCodeToName(cc) : '';
+            panel.country.textContent = cc ? (full || cc) : 'N/A';
+        }
+        if (panel.launch) panel.launch.textContent = sat.launch || 'N/A';
+        if (panel.velocity) {
+            // compute approximate velocity from consecutive samples
+            const last = lastSamples.get(String(sat.id));
+            const nowMs = Date.now();
+            let vel = null;
+            if (last && isFinite(last.lat) && isFinite(last.lng) && last.timeMs) {
+                const dKm = haversineKm(last.lat, last.lng, sat.lat, sat.lng);
+                const dt = (nowMs - last.timeMs) / 1000; // seconds
+                if (dt > 0) vel = dKm / dt; // km/s
+            }
+            panel.velocity.textContent = (vel && isFinite(vel)) ? vel.toFixed(3) : 'N/A';
+            // store current sample
+            lastSamples.set(String(sat.id), { lat: sat.lat, lng: sat.lng, timeMs: nowMs, altitudeKm: sat.altitude });
+        }
+    };
 
     satellites.forEach((satellite, idx) => {
         // Extract position
@@ -341,6 +387,7 @@ function displaySatellites(satellites, userLocation) {
 
         // Compute a stable id for this satellite
         const satId = satellite.satnum ?? satellite.id ?? satellite.name ?? `${satPosition.lat.toFixed(4)},${satPosition.lng.toFixed(4)}`;
+        satellite.id = satId; // ensure id stored for velocity tracking
         incomingIds.add(String(satId));
 
         // Update existing marker or create a new one
@@ -363,39 +410,18 @@ function displaySatellites(satellites, userLocation) {
                 }
             });
 
-            // Add click listener for info and remember which card is open
+            // Click selects satellite and updates side panel (no popup cards)
             marker.addListener('click', () => {
-                const content = `
-                    <div style="padding: 10px;">
-                        <h3 style="margin: 0 0 10px 0;">${satellite.name || 'Satellite'}</h3>
-                        ${satellite.altitude ? `<p><strong>Altitude:</strong> ${satellite.altitude.toFixed(4)} km</p>` : ''}
-                        <p><strong>Position:</strong> ${parseFloat(lat).toFixed(4)}°, ${parseFloat(lng).toFixed(4)}°</p>
-                        ${satellite.satnum ? `<p><strong>NORAD ID:</strong> ${satellite.satnum}</p>` : ''}
-                    </div>
-                `;
-                infoWindow.setContent(content);
-                infoWindow.open(map, marker);
-                openSatId = String(satId);
+                selectedSatId = String(satId);
+                showPanel({ ...satellite, lat: satPosition.lat, lng: satPosition.lng, id: satId });
             });
 
             satelliteMarkers.set(String(satId), { marker, data: satellite });
         }
 
-        // If this card is currently open, keep it open with updated content
-        if (openSatId && String(satId) === String(openSatId)) {
-            const m = satelliteMarkers.get(String(satId))?.marker;
-            if (m) {
-                const content = `
-                    <div style="padding: 10px;">
-                        <h3 style="margin: 0 0 10px 0;">${satellite.name || 'Satellite'}</h3>
-                        ${satellite.altitude ? `<p><strong>Altitude:</strong> ${satellite.altitude.toFixed(4)} km</p>` : ''}
-                        <p><strong>Position:</strong> ${parseFloat(lat).toFixed(4)}°, ${parseFloat(lng).toFixed(4)}°</p>
-                        ${satellite.satnum ? `<p><strong>NORAD ID:</strong> ${satellite.satnum}</p>` : ''}
-                    </div>
-                `;
-                infoWindow.setContent(content);
-                infoWindow.open(map, m);
-            }
+        // If this satellite is currently selected, update the panel with its latest data
+        if (selectedSatId && String(satId) === String(selectedSatId)) {
+            showPanel({ ...satellite, lat: satPosition.lat, lng: satPosition.lng, id: satId });
         }
 
         // Check if satellite is overhead
@@ -418,9 +444,7 @@ function displaySatellites(satellites, userLocation) {
         if (!incomingIds.has(id)) {
             entry.marker.setMap(null);
             satelliteMarkers.delete(id);
-            if (openSatId && String(openSatId) === String(id)) {
-                openSatId = null; // closed because satellite disappeared
-            }
+            // Keep selection; we don't clear the panel to avoid flicker, but note that the selected sat might be out of range now
         }
     }
 
@@ -434,6 +458,67 @@ function displaySatellites(satellites, userLocation) {
     } else {
         hideNotification();
     }
+}
+
+// Haversine distance in km
+function haversineKm(lat1, lon1, lat2, lon2) {
+    const R = 6371; // km
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
+// Convert country code (ISO-2 or common ISO-3) to full country name
+function countryCodeToName(cc) {
+    if (!cc) return '';
+    let code = String(cc).trim().toUpperCase();
+    const iso3to2 = {
+        USA: 'US', RUS: 'RU', CHN: 'CN', PRC: 'CN', GBR: 'GB', UK: 'GB',
+        JPN: 'JP', IND: 'IN', DEU: 'DE', GER: 'DE', FRA: 'FR', ESP: 'ES', ITA: 'IT',
+        CAN: 'CA', BRA: 'BR', AUS: 'AU', KOR: 'KR', PRK: 'KP', ISR: 'IL',
+        IRN: 'IR', SAU: 'SA', ARE: 'AE', UAE: 'AE', MEX: 'MX', ARG: 'AR',
+        ZAF: 'ZA', CHL: 'CL', SWE: 'SE', NOR: 'NO', FIN: 'FI', POL: 'PL',
+        NLD: 'NL', BEL: 'BE', CHE: 'CH', AUT: 'AT', CZE: 'CZ', SVK: 'SK',
+        PRT: 'PT', GRC: 'GR', TUR: 'TR', EGY: 'EG', ZWE: 'ZW', NGA: 'NG',
+        IDN: 'ID', MYS: 'MY', PAK: 'PK', BGD: 'BD', VNM: 'VN', THA: 'TH',
+        PHL: 'PH', SGP: 'SG', NZL: 'NZ', IRL: 'IE', SCO: 'GB', ENG: 'GB',
+        WAL: 'GB', NIR: 'GB', KAZ: 'KZ', UKR: 'UA', BLR: 'BY', ROM: 'RO',
+        HUN: 'HU'
+    };
+    if (code.length === 3 && iso3to2[code]) code = iso3to2[code];
+    const names = {
+        AF: 'Afghanistan', AL: 'Albania', DZ: 'Algeria', AO: 'Angola', AR: 'Argentina',
+        AM: 'Armenia', AU: 'Australia', AT: 'Austria', AZ: 'Azerbaijan',
+        BD: 'Bangladesh', BY: 'Belarus', BE: 'Belgium', BJ: 'Benin', BO: 'Bolivia',
+        BA: 'Bosnia and Herzegovina', BW: 'Botswana', BR: 'Brazil', BG: 'Bulgaria',
+        KH: 'Cambodia', CM: 'Cameroon', CA: 'Canada', CL: 'Chile', CN: 'China',
+        CO: 'Colombia', CR: 'Costa Rica', HR: 'Croatia', CU: 'Cuba', CY: 'Cyprus',
+        CZ: 'Czechia', DK: 'Denmark', DO: 'Dominican Republic', EC: 'Ecuador',
+        EG: 'Egypt', SV: 'El Salvador', EE: 'Estonia', ET: 'Ethiopia', FI: 'Finland',
+        FR: 'France', GE: 'Georgia', DE: 'Germany', GH: 'Ghana', GR: 'Greece',
+        GT: 'Guatemala', HN: 'Honduras', HK: 'Hong Kong', HU: 'Hungary', IS: 'Iceland',
+        IN: 'India', ID: 'Indonesia', IR: 'Iran', IQ: 'Iraq', IE: 'Ireland',
+        IL: 'Israel', IT: 'Italy', JM: 'Jamaica', JP: 'Japan', JO: 'Jordan',
+        KZ: 'Kazakhstan', KE: 'Kenya', KP: 'North Korea', KR: 'South Korea',
+        KW: 'Kuwait', KG: 'Kyrgyzstan', LA: 'Laos', LV: 'Latvia', LB: 'Lebanon',
+        LR: 'Liberia', LY: 'Libya', LT: 'Lithuania', LU: 'Luxembourg',
+        MY: 'Malaysia', ML: 'Mali', MX: 'Mexico', MD: 'Moldova', MN: 'Mongolia',
+        ME: 'Montenegro', MA: 'Morocco', MZ: 'Mozambique', MM: 'Myanmar',
+        NL: 'Netherlands', NZ: 'New Zealand', NI: 'Nicaragua', NE: 'Niger', NG: 'Nigeria',
+        MK: 'North Macedonia', NO: 'Norway', OM: 'Oman', PK: 'Pakistan', PS: 'Palestine',
+        PA: 'Panama', PY: 'Paraguay', PE: 'Peru', PH: 'Philippines', PL: 'Poland',
+        PT: 'Portugal', PR: 'Puerto Rico', QA: 'Qatar', RO: 'Romania', RU: 'Russia',
+        RW: 'Rwanda', SA: 'Saudi Arabia', RS: 'Serbia', SG: 'Singapore', SK: 'Slovakia',
+        SI: 'Slovenia', ZA: 'South Africa', ES: 'Spain', LK: 'Sri Lanka', SE: 'Sweden',
+        CH: 'Switzerland', SY: 'Syria', TW: 'Taiwan', TJ: 'Tajikistan', TZ: 'Tanzania',
+        TH: 'Thailand', TN: 'Tunisia', TR: 'Turkey', TM: 'Turkmenistan', UA: 'Ukraine',
+        AE: 'United Arab Emirates', GB: 'United Kingdom', US: 'United States', UY: 'Uruguay',
+        UZ: 'Uzbekistan', VE: 'Venezuela', VN: 'Vietnam', YE: 'Yemen', ZM: 'Zambia', ZW: 'Zimbabwe'
+    };
+    return names[code] || '';
 }
 
 function clearSatelliteMarkers() {
@@ -531,6 +616,8 @@ async function fetchPositions() {
             .map((p, idx) => ({
                 id: p.satnum ?? p.index ?? (p.tle1 ? (String(p.tle1).slice(2,7)) : idx + 1),
                 name: p.name || `Satellite ${p.index ?? (idx + 1)}`,
+                country: p.country,
+                launch: p.launch,
                 lat: parseFloat(p.lat),
                 lng: parseFloat(p.lng),
                 // Backend altitude is meters; convert to km for display

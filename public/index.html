@@ -24,7 +24,7 @@
   <main class="flex-1 flex flex-col md:flex-row">
 
     <!-- Control Panel -->
-    <aside class="md:w-1/4 bg-slate-800 bg-opacity-60 p-6 border-r border-slate-700 flex flex-col justify-between overflow-y-auto">
+    <aside class="md:w-1/4 bg-slate-800 bg-opacity-60 p-6 border-r border-slate-700 flex flex-col justify-between max-h-[calc(100vh-4rem)] overflow-y-auto">
       <div>
         <h2 class="text-xl font-semibold mb-4">Control Panel</h2>
 
@@ -32,7 +32,7 @@
         <div class="mb-6">
           <p id="statusText" class="text-sm text-gray-300 mb-2">Initializing...</p>
           <div class="flex flex-col gap-2">
-            <button id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all shadow-md">🔄 Refresh Satellites</button>
+            <button id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all shadow-md isabled:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none">🔄 Refresh Satellites</button>
             <button id="centerBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-all shadow-md">📍 Center on Me</button>
           </div>
         </div>
@@ -89,7 +89,7 @@
         <li><strong>Auto-Update:</strong> Satellite data refreshes every 30 seconds.</li>
       </ol>
 
-      <p class="mt-4 text-sm text-gray-400"><strong>Tip:</strong> Click a satellite marker to view details!</p>
+      <p class="mt-4 text-sm text-gray-400"><strong>Tip:</strong> Click a satellite marker to view details in the side panel!</p>
 
       <button id="startTracking" class="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition font-medium">Start Tracking</button>
     </div>
