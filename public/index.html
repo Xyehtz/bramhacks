@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satellite Tracker - Real-time Space Tracking</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAsGjDkDUs52OaYbs7HN-v6pKkq4Vr7vvU&libraries=geometry"></script>
+</head>
+<body>
+    <!-- Welcome Modal/Instructions -->
+    <div id="instructionsModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Welcome to Satellite Tracker! 🛰️</h2>
+            <div class="instructions">
+                <h3>How to Use:</h3>
+                <ol>
+                    <li><strong>Allow Location Access:</strong> The app needs your location to track satellites overhead.</li>
+                    <li><strong>View the Map:</strong> Your location will be marked with a blue pin.</li>
+                    <li><strong>Satellite Markers:</strong> Satellites currently in space will appear as red markers on the map.</li>
+                    <li><strong>Notifications:</strong> When a satellite flies directly over you, you'll see a notification at the top!</li>
+                    <li><strong>Auto-Update:</strong> The satellite positions update every 30 seconds automatically.</li>
+                </ol>
+                <p><strong>Tip:</strong> Click on any satellite marker to see its name and details!</p>
+                <button id="startTracking" class="start-btn">Start Tracking Satellites</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Banner -->
+    <div id="notification" class="notification hidden">
+        <div class="notification-content">
+            <span class="notification-icon">🛰️</span>
+            <span class="notification-text">A satellite is currently flying over your location!</span>
+            <button class="notification-close" onclick="closeNotification()">&times;</button>
+        </div>
+    </div>
+
+    <!-- Control Panel -->
+    <div class="control-panel">
+        <h3>Satellite Tracker</h3>
+        <div class="status">
+            <span id="statusText">Initializing...</span>
+        </div>
+        <div class="controls">
+            <button id="refreshBtn" class="btn">Refresh Satellites</button>
+            <button id="centerBtn" class="btn">Center on Me</button>
+        </div>
+        <div class="stats">
+            <p>Satellites Tracked: <span id="satelliteCount">0</span></p>
+            <p>Last Update: <span id="lastUpdate">Never</span></p>
+        </div>
+    </div>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
+
