@@ -1,62 +1,122 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Satellite Tracker - Real-time Space Tracking</title>
-    <link rel="stylesheet" href="style.css">
-    <!-- Google Maps API will be loaded dynamically after fetching the API key -->
-</head>
-<body>
-    <!-- Welcome Modal/Instructions -->
-    <div id="instructionsModal" class="modal">
-        <div class="modal-content">
-            <span class="close">&times;</span>
-            <h2>Welcome to Satellite Tracker! 🛰️</h2>
-            <div class="instructions">
-                <h3>How to Use:</h3>
-                <ol>
-                    <li><strong>Allow Location Access:</strong> The app needs your location to track satellites overhead.</li>
-                    <li><strong>View the Map:</strong> Your location will be marked with a blue pin.</li>
-                    <li><strong>Satellite Markers:</strong> Satellites currently in space will appear as red markers on the map.</li>
-                    <li><strong>Notifications:</strong> When a satellite flies directly over you, you'll see a notification at the top!</li>
-                    <li><strong>Auto-Update:</strong> The satellite positions update every 30 seconds automatically.</li>
-                </ol>
-                <p><strong>Tip:</strong> Click on any satellite marker to see its name and details!</p>
-                <button id="startTracking" class="start-btn">Start Tracking Satellites</button>
-            </div>
-        </div>
-    </div>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Satellite Tracker - Real-time Space Tracking</title>
 
-    <!-- Notification Banner -->
-    <div id="notification" class="notification hidden">
-        <div class="notification-content">
-            <span class="notification-icon">🛰️</span>
-            <span class="notification-text">A satellite is currently flying over your location!</span>
-            <button class="notification-close" onclick="closeNotification()">&times;</button>
-        </div>
-    </div>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Your existing CSS -->
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white font-sans min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="w-full bg-slate-800 bg-opacity-70 backdrop-blur-md py-4 shadow-md flex justify-center items-center border-b border-slate-700">
+    <h1 class="text-2xl font-bold tracking-wide flex items-center gap-2">
+      🛰️ <span>Satellite Tracker</span>
+    </h1>
+  </header>
+
+  <!-- Main Layout -->
+  <main class="flex-1 flex flex-col md:flex-row">
 
     <!-- Control Panel -->
-    <div class="control-panel">
-        <h3>Satellite Tracker</h3>
-        <div class="status">
-            <span id="statusText">Initializing...</span>
+    <aside class="md:w-1/4 bg-slate-800 bg-opacity-60 p-6 border-r border-slate-700 flex flex-col justify-between overflow-y-auto">
+      <div>
+        <h2 class="text-xl font-semibold mb-4">Control Panel</h2>
+
+        <!-- Status -->
+        <div class="mb-6">
+          <p id="statusText" class="text-sm text-gray-300 mb-2">Initializing...</p>
+          <div class="flex flex-col gap-2">
+            <button id="refreshBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-all shadow-md">🔄 Refresh Satellites</button>
+            <button id="centerBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-all shadow-md">📍 Center on Me</button>
+          </div>
         </div>
-        <div class="controls">
-            <button id="refreshBtn" class="btn">Refresh Satellites</button>
-            <button id="centerBtn" class="btn">Center on Me</button>
+
+        <!-- Stats -->
+        <div class="bg-slate-900 bg-opacity-50 p-4 rounded-xl border border-slate-700 mb-6">
+          <p class="text-sm text-gray-300">Satellites Tracked: <span id="satelliteCount" class="font-semibold text-white">0</span></p>
+          <p class="text-sm text-gray-300 mt-2">Last Update: <span id="lastUpdate" class="font-semibold text-white">Never</span></p>
         </div>
-        <div class="stats">
-            <p>Satellites Tracked: <span id="satelliteCount">0</span></p>
-            <p>Last Update: <span id="lastUpdate">Never</span></p>
+
+        <!-- Satellite Info Section -->
+        <div id="satelliteInfo" class="bg-slate-900 bg-opacity-50 p-4 rounded-xl border border-slate-700 hidden">
+          <h3 class="text-lg font-semibold mb-3 text-blue-400">🛰️ Satellite Details</h3>
+
+          <!-- 3D Model Container -->
+          <div id="satelliteModel" class="w-full h-48 bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-700 rounded-lg flex items-center justify-center mb-4">
+            <!-- Three.js canvas will be injected here -->
+          </div>
+
+          <!-- Satellite Data -->
+          <div class="space-y-1 text-sm text-gray-300">
+            <p><strong>Name:</strong> <span id="satelliteName">N/A</span></p>
+            <p><strong>Altitude:</strong> <span id="satelliteAltitude">N/A</span> km</p>
+            <p><strong>Velocity:</strong> <span id="satelliteVelocity">N/A</span> km/s</p>
+            <p><strong>Country:</strong> <span id="satelliteCountry">N/A</span></p>
+            <p><strong>Launch Date:</strong> <span id="satelliteLaunch">N/A</span></p>
+          </div>
         </div>
+      </div>
+
+      <footer class="mt-6 text-xs text-gray-500 text-center">
+        Made with ❤️ by the Satellite Tracker Team
+      </footer>
+    </aside>
+
+    <!-- Map Section -->
+    <section class="flex-1 relative">
+      <div id="map" class="w-full h-[calc(100vh-4rem)] md:h-full"></div>
+    </section>
+  </main>
+
+  <!-- Instructions Modal -->
+  <div id="instructionsModal" class="fixed inset-0 bg-black bg-opacity-70 hidden flex items-center justify-center z-50">
+    <div class="bg-slate-800 rounded-2xl p-8 max-w-lg w-11/12 shadow-2xl border border-slate-700 relative">
+      <button class="absolute top-3 right-4 text-2xl text-gray-400 hover:text-white transition" id="closeModal">&times;</button>
+      <h2 class="text-2xl font-semibold mb-4 text-center">Welcome to Satellite Tracker 🛰️</h2>
+      <p class="text-gray-300 text-sm mb-4 text-center">Here’s how to get started:</p>
+
+      <ol class="list-decimal list-inside space-y-2 text-gray-300 text-sm">
+        <li><strong>Allow Location Access:</strong> We need your location to find satellites overhead.</li>
+        <li><strong>View the Map:</strong> Your location appears as a blue pin.</li>
+        <li><strong>Satellite Markers:</strong> Active satellites show as red markers.</li>
+        <li><strong>Notifications:</strong> Get alerts when one flies above you.</li>
+        <li><strong>Auto-Update:</strong> Satellite data refreshes every 30 seconds.</li>
+      </ol>
+
+      <p class="mt-4 text-sm text-gray-400"><strong>Tip:</strong> Click a satellite marker to view details!</p>
+
+      <button id="startTracking" class="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg transition font-medium">Start Tracking</button>
     </div>
+  </div>
 
-    <!-- Map Container -->
-    <div id="map"></div>
+  <!-- Notification Banner -->
+  <div id="notification" class="hidden fixed top-4 left-1/2 transform -translate-x-1/2 bg-indigo-600 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-3 z-50">
+    <span class="text-xl">🛰️</span>
+    <span class="notification-text">A satellite is currently flying over your location!</span>
+    <button class="ml-3 text-lg font-bold hover:text-gray-200" onclick="closeNotification()">&times;</button>
+  </div>
 
-    <script src="app.js"></script>
+  <!-- Three.js and required loaders -->
+  <script async src="https://unpkg.com/es-module-shims/dist/es-module-shims.js"></script>
+  
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.157.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.157.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <!-- Custom JS -->
+  <script type="module" src="satellite3D.js"></script>
+  <script src="app.js"></script>
+
 </body>
 </html>
-
