@@ -296,15 +296,141 @@ app.get('/api/maps/key', (req, res) => {
 app.get('/api/positions', async (req, res) => {
   try {
     const positionsPath = path.join(__dirname, 'TLE_positions_first_50.json');
-    // If positions file exists and is recent enough, return it
+
+    // Optional: user location for proximity-based selection
+    const latQ = req.query.lat != null ? parseFloat(req.query.lat) : undefined;
+    const lonQ = req.query.lon != null ? parseFloat(req.query.lon) : undefined;
+    const hasUserLoc = Number.isFinite(latQ) && Number.isFinite(lonQ);
+
+    // If we have a user location, try to compute from freshest wide set, then filter by distance
+    if (hasUserLoc) {
+      // Helper: haversine distance in meters
+      const R = 6371e3;
+      const toRad = (d) => (d * Math.PI) / 180;
+      const haversine = (lat1, lon1, lat2, lon2) => {
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      };
+
+      let tleCandidates = [];
+      try {
+        // Prefer fresh data directly from keeptrack API for widest availability
+        const apiResp = await axios.get('https://api.keeptrack.space/v2/sats', {
+          params: { lat: latQ, lon: lonQ, alt: 0 },
+          timeout: 10000,
+        });
+        const raw = apiResp.data;
+        let arr = Array.isArray(raw) ? raw : [];
+        if (!arr.length && raw && typeof raw === 'object') {
+          const keys = ['sats', 'satellites', 'data', 'results', 'items'];
+          for (const k of keys) {
+            if (Array.isArray(raw[k])) { arr = raw[k]; break; }
+          }
+        }
+        tleCandidates = arr
+          .map(item => {
+            const tle1 = item?.tle1; const tle2 = item?.tle2;
+            if (!tle1 || !tle2) return null;
+            const m = /^1\s+(\d{5})/.exec(String(tle1).trim());
+            const satnum = m ? parseInt(m[1], 10) : undefined;
+            return { satnum, tle1, tle2 };
+          })
+          .filter(p => p && p.tle1 && p.tle2);
+      } catch (freshErr) {
+        console.warn('Fresh fetch in /api/positions failed, falling back to persisted TLEs:', freshErr.message);
+      }
+
+      // Fallback: use persisted selection or legacy TLE file
+      if (!tleCandidates.length) {
+        try {
+          const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+          if (fs.existsSync(selectionPath)) {
+            const parsed = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
+            if (Array.isArray(parsed)) {
+              tleCandidates = parsed.map(s => ({ satnum: s.satnum, tle1: s.tle1, tle2: s.tle2 }));
+            }
+          }
+        } catch {}
+      }
+      if (!tleCandidates.length) {
+        try {
+          const tlePath = path.join(__dirname, 'TLE_first_50.json');
+          if (fs.existsSync(tlePath)) {
+            const parsed = JSON.parse(fs.readFileSync(tlePath, 'utf8'));
+            if (Array.isArray(parsed)) {
+              tleCandidates = parsed.map((s) => ({ satnum: undefined, tle1: s.tle1, tle2: s.tle2 }));
+            }
+          }
+        } catch {}
+      }
+
+      if (!tleCandidates.length) {
+        return res.status(404).json({ error: 'No TLE data available to compute positions yet. Hit /api/satellites first to generate files.' });
+      }
+
+      const now = new Date();
+      const gmst = satellite.gstime(now);
+      const results = [];
+      for (let idx = 0; idx < tleCandidates.length; idx++) {
+        const pair = tleCandidates[idx];
+        try {
+          const satrec = satellite.twoline2satrec(pair.tle1, pair.tle2);
+          const pv = satellite.propagate(
+            satrec,
+            now.getUTCFullYear(),
+            now.getUTCMonth() + 1,
+            now.getUTCDate(),
+            now.getUTCHours(),
+            now.getUTCMinutes(),
+            now.getUTCSeconds()
+          );
+          const positionECI = pv && pv.position;
+          if (!positionECI) continue;
+          const positionGD = satellite.eciToGeodetic(positionECI, gmst);
+          const longitude = satellite.degreesLong(positionGD.longitude);
+          const latitude = satellite.degreesLat(positionGD.latitude);
+          const altitude = positionGD.height * 1000; // meters
+          const dist = haversine(latQ, lonQ, latitude, longitude);
+          results.push({ index: idx + 1, satnum: pair.satnum, tle1: pair.tle1, tle2: pair.tle2, latitude, longitude, altitude, distance: dist });
+        } catch {}
+      }
+
+      // Sort by distance and take closest TARGET_COUNT
+      results.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+      const top = results.slice(0, TARGET_COUNT);
+
+      // Persist and return normalized response
+      try {
+        fs.writeFileSync(positionsPath, JSON.stringify(top, null, 2), 'utf8');
+      } catch (e) {
+        console.warn('Failed to persist TLE_positions_first_50.json:', e.message);
+      }
+
+      const positions = top.map(p => ({
+        index: p.index,
+        satnum: p.satnum,
+        lat: p.latitude,
+        lng: p.longitude,
+        altitude: p.altitude,
+        distance: p.distance,
+        tle1: p.tle1,
+        tle2: p.tle2,
+      })).filter(p => isFinite(p.lat) && isFinite(p.lng));
+
+      return res.json({ positions });
+    }
+
+    // No user location: keep previous behavior and return last computed or recomputed set (up to TARGET_COUNT)
+    // If positions file exists and is parseable, return it
     if (fs.existsSync(positionsPath)) {
       try {
         const content = fs.readFileSync(positionsPath, 'utf8');
         const data = JSON.parse(content);
         if (Array.isArray(data) && data.length) {
-          // Normalize keys for frontend: lat/lng in degrees, altitude in meters
           const positions = data.map(p => {
-            // derive satnum if missing
             let satnum = p.satnum;
             if (!satnum && p.tle1) {
               const m = /^1\s+(\d{5})/.exec(String(p.tle1).trim());

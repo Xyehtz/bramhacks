@@ -477,7 +477,8 @@ async function fetchPositions() {
                 console.warn('Priming /api/satellites failed (continuing):', e);
             }
         }
-        const resp = await fetch('/api/positions');
+        const positionsUrl = userLocation ? `/api/positions?lat=${userLocation.lat}&lon=${userLocation.lng}` : '/api/positions';
+        const resp = await fetch(positionsUrl);
         const json = await resp.json();
         if (!resp.ok) {
             throw new Error(json.error || 'Failed to fetch positions');
