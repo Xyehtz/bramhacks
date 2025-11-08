@@ -593,5 +593,5 @@ app.get('/api/positions', async (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
-    console.log(`Make sure to set GOOGLE_MAPS_API_KEY in your .env file`);
+    //console.log(`Make sure to set GOOGLE_MAPS_API_KEY in your .env file`);
 });
