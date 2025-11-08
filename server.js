@@ -8,6 +8,11 @@ const satellite = require('satellite.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+<<<<<<< HEAD
+=======
+// Target number of satellites to persist/compute
+const TARGET_COUNT = 50;
+>>>>>>> 30e96c306596c92bff69f2314034456c88c0e6ab
 
 // Middleware
 app.use(cors());

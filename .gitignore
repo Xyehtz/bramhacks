@@ -18,3 +18,11 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# JSON files
+Selected_satellites.json
+TLE_first_50.json
+TLE_positions_first_50.json
+
+# TXT files
+APIResponse.txt
