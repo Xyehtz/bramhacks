@@ -13,15 +13,9 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Serve index.html with API key injection
+// Serve index.html
 app.get('/', (req, res) => {
-    let html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-    
-    // Replace API key placeholder with actual key from environment
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY || 'YOUR_GOOGLE_MAPS_API_KEY';
-    html = html.replace(/YOUR_GOOGLE_MAPS_API_KEY/g, apiKey);
-    
-    res.send(html);
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Serve other static files

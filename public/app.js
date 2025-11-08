@@ -11,16 +11,44 @@ let updateInterval = null;
 let isTracking = false;
 
 // Initialize the application
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     // Show instructions modal
     showInstructions();
     
     // Setup event listeners
     setupEventListeners();
     
-    // Initialize map (will wait for API key)
-    initMap();
+    try {
+        // Fetch Google Maps API key from server
+        const response = await fetch('/api/maps/key');
+        if (!response.ok) {
+            throw new Error('Failed to fetch Google Maps API key');
+        }
+        const data = await response.json();
+        
+        // Load Google Maps API dynamically
+        await loadGoogleMapsAPI(data.key);
+        
+        // Initialize map
+        initMap();
+    } catch (error) {
+        console.error('Error loading Google Maps:', error);
+        updateStatus('Error: Failed to load Google Maps. Please try again later.');
+    }
 });
+
+// Function to load Google Maps API dynamically
+function loadGoogleMapsAPI(apiKey) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=geometry`;
+        script.async = true;
+        script.defer = true;
+        script.onerror = () => reject(new Error('Failed to load Google Maps API'));
+        script.onload = () => resolve();
+        document.head.appendChild(script);
+    });
+}
 
 function setupEventListeners() {
     // Close modal
