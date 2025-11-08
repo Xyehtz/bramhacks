@@ -24,7 +24,7 @@
   <main class="flex-1 flex flex-col md:flex-row">
 
     <!-- Control Panel -->
-    <aside class="md:w-1/4 bg-slate-800 bg-opacity-60 p-6 border-r border-slate-700 flex flex-col justify-between max-h-[calc(100vh-4rem)] overflow-y-auto">
+      <aside id="sidebar" class="md:w-1/4 bg-slate-800 bg-opacity-60 p-6 border-r border-slate-700 flex flex-col justify-between max-h-[calc(100vh-4rem)] overflow-y-auto">
       <div>
         <h2 class="text-xl font-semibold mb-4">Control Panel</h2>
 
@@ -71,6 +71,10 @@
 
     <!-- Map Section -->
     <section class="flex-1 relative">
+      <!-- Mobile toggle button: hide/show the left panel so users can view/scroll the map -->
+      <button id="togglePanelBtn" class="md:hidden fixed top-4 left-4 z-50 bg-slate-800 bg-opacity-80 text-white p-2 rounded-lg shadow-lg">
+        ☰
+      </button>
       <div id="map" class="w-full h-[calc(100vh-4rem)] md:h-full"></div>
     </section>
   </main>

@@ -5,6 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 // Global variables for Three.js
 let scene, camera, renderer, model, controls;
+let loadingEl = null;
 let animationId = null;
 
 // Initialize Three.js scene
@@ -16,36 +17,51 @@ window.initThreeJS = function() {
             return;
         }
 
-        const width = container.clientWidth;
-        const height = container.clientHeight;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
 
-        // Scene setup
-        scene = new THREE.Scene();
-        camera = new THREE.PerspectiveCamera(70, width / height, 0.5, 800);
+    console.log('initThreeJS: container size', width, height);
+
+    // Scene setup
+    scene = new THREE.Scene();
+    // Use a more forgiving frustum and familiar FOV that worked before
+    camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
         renderer = new THREE.WebGLRenderer({ 
             antialias: true, 
             alpha: true,
             powerPreference: "high-performance" 
         });
         
-        renderer.setSize(width, height);
-        renderer.setClearColor(0x000000, 0); // Transparent background
-        renderer.setPixelRatio(window.devicePixelRatio);
-        
-        container.innerHTML = ''; // Clear container
-        container.appendChild(renderer.domElement);
+    renderer.setSize(width, height);
+    renderer.setClearColor(0x000000, 0); // Transparent background
+    renderer.setPixelRatio(window.devicePixelRatio);
 
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    container.innerHTML = ''; // Clear container
+    container.appendChild(renderer.domElement);
+
+    // Create a loading overlay element (so we don't remove the canvas while loading)
+    loadingEl = document.createElement('div');
+    loadingEl.className = 'sat-model-loading text-blue-400';
+    loadingEl.style.position = 'absolute';
+    loadingEl.style.top = '50%';
+    loadingEl.style.left = '50%';
+    loadingEl.style.transform = 'translate(-50%, -50%)';
+    loadingEl.style.pointerEvents = 'none';
+    loadingEl.style.zIndex = '10';
+    loadingEl.textContent = 'Loading 3D model...';
+    container.appendChild(loadingEl);
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
         scene.add(ambientLight);
 
         const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
         directionalLight.position.set(5, 5, 5);
         scene.add(directionalLight);
 
-        // Position camera
-        camera.position.set(0, 0.1, 2);// <--- CHANGED: Set a Z distance of 3 and lowered Y to 0.5
-        camera.lookAt(0, 0, 0);
+    // Position camera (moved slightly back and up for a better view)
+    camera.position.set(0, 1, 3);
+    camera.lookAt(0, 0, 0);
 
     // Add OrbitControls
     controls = new OrbitControls(camera, renderer.domElement);
@@ -69,9 +85,7 @@ window.initThreeJS = function() {
         dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
         loader.setDRACOLoader(dracoLoader);
 
-        // Show loading text
-        container.innerHTML = '<p class="text-blue-400">Loading 3D model...</p>';
-
+        console.log('Loading GLB from /models/satellite.glb');
         loader.load('/models/satellite.glb', 
             // Success callback
             (gltf) => {
@@ -88,29 +102,33 @@ window.initThreeJS = function() {
                 const scale = 1.5 / maxDim;
                 model.scale.multiplyScalar(scale);
                 
-                // Adjust model position
-                model.position.y = 0.001; // Raise the model up
+                // Adjust model position to sit nicely in view
+                const sizeAfter = box.getSize(new THREE.Vector3()).multiplyScalar(model.scale.x);
+                console.log('Model size before adjust:', box.getSize(new THREE.Vector3()), 'scaled approx:', sizeAfter);
+                model.position.y = 0.5;
                 
                 scene.add(model);
                 
-                // Clear loading text
-                container.innerHTML = '';
-                container.appendChild(renderer.domElement);
-                
+                // Clear loading overlay
+                try { if (loadingEl && loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl); } catch(e){}
+                // Auto-fit camera to the loaded model
+                try { fitCameraToObject(camera, model, controls, 1.15); } catch (e) { console.warn('fitCameraToObject failed:', e); }
+
                 // Start animation
                 animate();
             },
             // Progress callback
             (xhr) => {
-                if (xhr.lengthComputable) {
+                if (xhr.lengthComputable && loadingEl) {
                     const percent = (xhr.loaded / xhr.total) * 100;
-                    container.innerHTML = `<p class="text-blue-400">Loading 3D model: ${percent.toFixed(0)}%</p>`;
+                    loadingEl.textContent = `Loading 3D model: ${percent.toFixed(0)}%`;
                 }
             },
             // Error callback
             (error) => {
                 console.error('Error loading GLB model:', error);
-                container.innerHTML = '<p class="text-red-500">Error loading 3D model</p>';
+                try { if (loadingEl && loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl); } catch(e){}
+                container.appendChild(Object.assign(document.createElement('div'), { innerHTML: '<p class="text-red-500">Error loading 3D model</p>' }));
             }
         );
 
@@ -119,6 +137,43 @@ window.initThreeJS = function() {
         
     } catch (error) {
         console.error('Error initializing Three.js:', error);
+    }
+}
+
+// Helper: fit camera to an object (frames the object in view)
+function fitCameraToObject(camera, object, controls, offset = 1.25) {
+    const box = new THREE.Box3().setFromObject(object);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
+    if (!sphere || !isFinite(sphere.radius)) return;
+
+    const center = sphere.center.clone();
+    const radius = sphere.radius;
+
+    // Compute camera distance based on fov to fit the sphere
+    const fov = camera.fov * (Math.PI / 180);
+    // distance from center to camera
+    let distance = Math.abs(radius / Math.sin(fov / 2));
+    distance = distance * offset; // add some padding
+
+    // Place camera along its current direction from the center if possible, otherwise along Z
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    if (camDir.lengthSq() === 0) camDir.set(0, 0, 1);
+
+    const newPos = center.clone().sub(camDir.normalize().multiplyScalar(-distance));
+
+    camera.position.copy(newPos);
+    camera.near = Math.max(0.1, distance / 1000);
+    camera.far = Math.max(1000, distance * 10);
+    camera.updateProjectionMatrix();
+
+    if (controls) {
+        controls.target.copy(center);
+        controls.maxDistance = distance * 5;
+        controls.minDistance = Math.max(0.1, distance * 0.3);
+        controls.update();
+    } else {
+        camera.lookAt(center);
     }
 }
 
@@ -187,6 +242,10 @@ window.cleanupThreeJS = function() {
             try { controls.dispose(); } catch (e) { /* ignore */ }
             controls = null;
         }
+
+        // Remove loading overlay if present
+        try { if (loadingEl && loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl); } catch(e){}
+        loadingEl = null;
 
         // Clear references
         scene = null;

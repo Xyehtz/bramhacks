@@ -113,12 +113,36 @@ function setupEventListeners() {
             modal.style.display = 'none';
         }
     });
+
+    // Mobile: toggle sidebar visibility so users can scroll and view the map
+    const toggleBtn = document.getElementById('togglePanelBtn');
+    const sidebar = document.getElementById('sidebar');
+    if (toggleBtn && sidebar) {
+        toggleBtn.addEventListener('click', () => {
+            const isHidden = sidebar.classList.toggle('hidden');
+            // Update button icon
+            toggleBtn.textContent = isHidden ? '☰' : '✕';
+            // If hiding the sidebar, also cleanup any open satellite details
+            if (isHidden) {
+                try { closeSatelliteDetails(); } catch (e) { /* ignore */ }
+            }
+        });
+    }
+
+    // Close satellite details panel (mobile)
+    const closeSatBtn = document.getElementById('closeSatInfo');
+    if (closeSatBtn) {
+        closeSatBtn.addEventListener('click', () => {
+            closeSatelliteDetails();
+        });
+    }
 }
 
 function showInstructions() {
     const modal = document.getElementById('instructionsModal');
     if (modal) {
-        modal.style.display = 'block';
+        // Use flex to keep the modal centered (the modal element uses flex centering)
+        modal.style.display = 'flex';
     }
 }
 
@@ -386,6 +410,22 @@ function displaySatellites(satellites, userLocation) {
             // store current sample
             lastSamples.set(String(sat.id), { lat: sat.lat, lng: sat.lng, timeMs: nowMs, altitudeKm: sat.altitude });
         }
+        // Initialize 3D viewer for this satellite (clean previous and init after panel is visible)
+        try {
+            if (typeof window.cleanupThreeJS === 'function') {
+                window.cleanupThreeJS();
+            }
+        } catch (e) {
+            console.warn('cleanupThreeJS failed:', e);
+        }
+        // Defer init to allow DOM to paint and size the container
+        setTimeout(() => {
+            try {
+                if (typeof window.initThreeJS === 'function') window.initThreeJS();
+            } catch (e) {
+                console.warn('initThreeJS failed:', e);
+            }
+        }, 200);
     };
 
     satellites.forEach((satellite, idx) => {
@@ -547,19 +587,57 @@ function clearSatelliteMarkers() {
 function showNotification(count) {
     const notification = document.getElementById('notification');
     const text = document.querySelector('.notification-text');
-    
     if (notification && text) {
         text.textContent = count === 1 
             ? 'A satellite is currently flying over your location!'
             : `${count} satellites are currently flying over your location!`;
+
+        // Decide placement: on mobile use fixed bottom center in the viewport; on larger screens place over map area
+        const mapEl = document.getElementById('map');
+        const isMobile = window.innerWidth <= 768;
+        if (isMobile) {
+            if (notification.parentNode !== document.body) {
+                document.body.appendChild(notification);
+            }
+            notification.classList.add('map-position-mobile');
+            notification.classList.remove('map-position');
+        } else {
+            if (mapEl && notification.parentNode !== mapEl) {
+                mapEl.appendChild(notification);
+            }
+            notification.classList.add('map-position');
+            notification.classList.remove('map-position-mobile');
+        }
+
+        // Show with animation
         notification.classList.remove('hidden');
+        // Force reflow to restart animation if needed
+        // eslint-disable-next-line no-unused-expressions
+        void notification.offsetWidth;
+        notification.classList.add('show');
     }
 }
 
 function hideNotification() {
     const notification = document.getElementById('notification');
     if (notification) {
-        notification.classList.add('hidden');
+        // Remove animation class to trigger hide animation, then hide after duration
+        notification.classList.remove('show');
+        setTimeout(() => {
+            notification.classList.add('hidden');
+            // Clean up placement classes and move notification back to body to restore original placement
+            try {
+                if (notification.classList.contains('map-position-mobile')) {
+                    notification.classList.remove('map-position-mobile');
+                }
+                if (notification.classList.contains('map-position')) {
+                    notification.classList.remove('map-position');
+                }
+                if (notification.parentNode && notification.parentNode.id === 'map') {
+                    document.body.appendChild(notification);
+                }
+            } catch (e) { /* ignore */ }
+        }, 350);
     }
 }
 
@@ -579,6 +657,17 @@ function updateLastUpdate() {
     if (lastUpdate) {
         const now = new Date();
         lastUpdate.textContent = now.toLocaleTimeString();
+    }
+}
+
+function closeSatelliteDetails() {
+    try {
+        const panel = document.getElementById('satelliteInfo');
+        if (panel) panel.classList.add('hidden');
+        selectedSatId = null;
+        if (typeof window.cleanupThreeJS === 'function') window.cleanupThreeJS();
+    } catch (e) {
+        console.warn('Error closing satellite details:', e);
     }
 }
 
