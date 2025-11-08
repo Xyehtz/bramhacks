@@ -76,6 +76,20 @@ function setupEventListeners() {
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
             if (userLocation) {
+                refreshBtn.disabled = true;
+                let timeLeft = 30;
+                const originalText = refreshBtn.textContent;
+                
+                const timer = setInterval(() => {
+                    refreshBtn.textContent = `Wait ${timeLeft}s`;
+                    timeLeft--;
+                    if (timeLeft < 0) {
+                        clearInterval(timer);
+                        refreshBtn.disabled = false;
+                        refreshBtn.textContent = originalText;
+                    }
+                }, 1000);
+
                 fetchPositions();
             }
         });
