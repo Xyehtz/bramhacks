@@ -257,22 +257,54 @@ async function fetchSatellitesFallback(location) {
         if (tleData && Array.isArray(tleData) && tleData.length > 0) {
             // Calculate positions for a sample of satellites
             // This is a simplified version - in production, you'd use a proper TLE library
-            const sampleSatellites = tleData.slice(0, 50).map((sat, index) => {
-                // Simplified position calculation (not accurate, but demonstrates the concept)
-                const time = Date.now() / 1000;
-                const orbitPeriod = 90 * 60; // 90 minutes in seconds
-                const phase = (time % orbitPeriod) / orbitPeriod * 2 * Math.PI;
+            // const sampleSatellites = tleData.slice(0, 50).map((sat, index) => {
+            //     // Simplified position calculation (not accurate, but demonstrates the concept)
+            //     const time = Date.now() / 1000;
+            //     const orbitPeriod = 90 * 60; // 90 minutes in seconds
+            //     const phase = (time % orbitPeriod) / orbitPeriod * 2 * Math.PI;
                 
-                // Approximate position (this is simplified - real calculation needs proper TLE parsing)
-                const lat = location.lat + (Math.sin(phase + index) * 30);
-                const lng = location.lng + (Math.cos(phase + index) * 30);
+            //     // Approximate position (this is simplified - real calculation needs proper TLE parsing)
+            //     const lat = location.lat + (Math.sin(phase + index) * 30);
+            //     const lng = location.lng + (Math.cos(phase + index) * 30);
                 
-                return {
-                    name: sat.name || `Satellite ${index + 1}`,
+            //     return {
+            //         name: sat.name || `Satellite ${index + 1}`,
+            //         lat: lat,
+            //         lng: lng,
+            //         altitude: 400 + (index % 10) * 50 // Approximate altitude in km
+            //     };
+            // });
+
+            const sampleSatellites = [];
+            tleData.forEach(sat => {
+                // Use fixed offset from user location (30 degrees is arbitrary)
+                const lat = location.lat + (Math.random() * 60 - 30);
+                const lng = location.lng + (Math.random() * 60 - 30);
+                
+                const distance = google.maps.geometry.spherical.computeDistanceBetween(
+                    new google.maps.LatLng(location.lat, location.lng),
+                    new google.maps.LatLng(lat, lng)
+                );
+
+                const satellite = {
+                    name: sat.name || 'Unknown Satellite',
                     lat: lat,
                     lng: lng,
-                    altitude: 400 + (index % 10) * 50 // Approximate altitude in km
+                    altitude: 400,
+                    distance: distance
                 };
+
+                if (sampleSatellites.length < 50) {
+                    sampleSatellites.push(satellite);
+                } else {
+                    const maxDistSat = sampleSatellites.reduce((max, curr) => 
+                        curr.distance > max.distance ? curr : max
+                    );
+                    if (distance < maxDistSat.distance) {
+                        sampleSatellites.splice(sampleSatellites.indexOf(maxDistSat), 1);
+                        sampleSatellites.push(satellite);
+                    }
+                }
             });
             
             displaySatellites(sampleSatellites, location);
