@@ -32,10 +32,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Fetch Google Maps API key from server
         const response = await fetch(`${API_BASE_URL}/api/maps/key`);
         if (!response.ok) {
-            throw new Error('Failed to fetch Google Maps API key');
+            console.error('Server error status:', response.status, response.statusText);
+            throw new Error(`Failed to fetch Google Maps API key: ${response.status} ${response.statusText}`);
         }
-        const data = await response.json();
         
+        let data;
+        data = await response.json();
+
+        if (!data.key) {
+            throw new Error('No API key found in server response');
+        }
+
         // Load Google Maps API dynamically
         await loadGoogleMapsAPI(data.key);
         
@@ -43,7 +50,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         initMap();
     } catch (error) {
         console.error('Error loading Google Maps:', error);
-        updateStatus('Error: Failed to load Google Maps. Please try again later.');
+        updateStatus(`Error: Failed to load Google Maps - ${error.message}`);
     }
 });
 
