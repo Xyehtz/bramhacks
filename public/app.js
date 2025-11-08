@@ -45,7 +45,7 @@ function setupEventListeners() {
     if (refreshBtn) {
         refreshBtn.addEventListener('click', () => {
             if (userLocation) {
-                fetchSatellites(userLocation);
+                fetchPositions();
             }
         });
     }
@@ -157,13 +157,13 @@ function startTracking() {
     isTracking = true;
     updateStatus('Tracking satellites...');
     
-    // Fetch satellites immediately
-    fetchSatellites(userLocation);
+    // Fetch positions immediately
+    fetchPositions();
     
     // Set up auto-refresh
     updateInterval = setInterval(() => {
         if (userLocation) {
-            fetchSatellites(userLocation);
+            fetchPositions();
         }
     }, UPDATE_INTERVAL);
 }
@@ -381,3 +381,59 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
+
+
+// Fetch precomputed satellite positions from the server and render markers
+async function fetchPositions() {
+    try {
+        updateStatus('Fetching satellite positions...');
+        // Prime backend data by hitting /api/satellites to (re)generate TLE files
+        if (userLocation) {
+            try {
+                await fetch(`/api/satellites?lat=${userLocation.lat}&lon=${userLocation.lng}`);
+            } catch (e) {
+                // non-fatal
+                console.warn('Priming /api/satellites failed (continuing):', e);
+            }
+        }
+        const resp = await fetch('/api/positions');
+        const json = await resp.json();
+        if (!resp.ok) {
+            throw new Error(json.error || 'Failed to fetch positions');
+        }
+
+        // Clear existing markers before rendering new ones
+        clearSatelliteMarkers();
+
+        // Normalize response
+        let positions = [];
+        if (Array.isArray(json)) {
+            positions = json;
+        } else if (Array.isArray(json.positions)) {
+            positions = json.positions;
+        }
+
+        // Map to the shape expected by displaySatellites()
+        const satellites = positions
+            .filter(p => isFinite(p.lat) && isFinite(p.lng))
+            .map((p, idx) => ({
+                name: p.name || `Satellite ${p.index ?? (idx + 1)}`,
+                lat: parseFloat(p.lat),
+                lng: parseFloat(p.lng),
+                // Backend altitude is meters; convert to km for display
+                altitude: typeof p.altitude === 'number' ? (p.altitude / 1000) : undefined
+            }));
+
+        if (satellites.length > 0) {
+            displaySatellites(satellites, userLocation);
+            updateStatus(`Tracking ${satellites.length} satellites`);
+        } else {
+            updateStatus('No satellite positions available yet.');
+        }
+
+        updateLastUpdate();
+    } catch (err) {
+        console.error('Error fetching positions:', err);
+        updateStatus('Error: ' + err.message);
+    }
+}
