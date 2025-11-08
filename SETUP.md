@@ -3,7 +3,7 @@
 ## Step 1: Install Dependencies
 
 ```bash
-npm i
+npm install
 ```
 
 ## Step 2: Set Up Your Google Maps API Key
