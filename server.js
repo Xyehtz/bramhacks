@@ -59,26 +59,62 @@ app.get('/api/satellites', async (req, res) => {
         }
       }
 
-      const tlePairs = dataArray.slice(0, 50).map(item => ({
-        tle1: item?.tle1,
-        tle2: item?.tle2
-      })).filter(p => p.tle1 && p.tle2);
+      // Build list of available TLE items with satnum parsed from TLE line 1
+      const available = dataArray
+        .map(item => {
+          const tle1 = item?.tle1;
+          const tle2 = item?.tle2;
+          if (!tle1 || !tle2) return null;
+          const match = /^1\s+(\d{5})/.exec(tle1.trim());
+          const satnum = match ? parseInt(match[1], 10) : undefined;
+          return satnum ? { satnum, tle1, tle2 } : null;
+        })
+        .filter(Boolean);
 
-      if (tlePairs.length) {
-        console.log('Extracted first TLE pairs (up to 50):');
-        for (const pair of tlePairs) {
-          console.log(pair.tle1);
-          console.log(pair.tle2);
-          console.log('');
-        }
-        // Save for reference
-        fs.writeFile('TLE_first_50.json', JSON.stringify(tlePairs, null, 2), 'utf8', (err) => {
-          if (err) {
-            console.error('Failed to write TLE_first_50.json:', err.message);
+      const selectionPath = path.join(__dirname, 'Selected_satellites.json');
+      let selected = [];
+
+      if (fs.existsSync(selectionPath)) {
+        // Load existing persistent selection and refresh their TLEs from current availability
+        try {
+          const existing = JSON.parse(fs.readFileSync(selectionPath, 'utf8'));
+          if (Array.isArray(existing)) {
+            const availMap = new Map(available.map(a => [a.satnum, a]));
+            selected = existing.map(rec => {
+              const upd = availMap.get(rec.satnum);
+              return upd ? { ...rec, tle1: upd.tle1, tle2: upd.tle2, updatedAt: new Date().toISOString() } : rec;
+            });
           }
+        } catch (e) {
+          console.warn('Failed to read Selected_satellites.json, reinitializing from current data:', e.message);
+        }
+      }
+
+      if (!selected.length) {
+        // Initialize a deterministic selection: first 50 by satnum ascending
+        const uniqueBySatnum = new Map();
+        for (const item of available) {
+          if (!uniqueBySatnum.has(item.satnum)) uniqueBySatnum.set(item.satnum, item);
+          if (uniqueBySatnum.size >= 50) break;
+        }
+        selected = Array.from(uniqueBySatnum.values())
+          .sort((a, b) => a.satnum - b.satnum)
+          .slice(0, 50)
+          .map((rec, idx) => ({ index: idx + 1, satnum: rec.satnum, tle1: rec.tle1, tle2: rec.tle2, selectedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
+      }
+
+      if (selected.length) {
+        // Persist the stable selection and a convenience TLE_first_50.json reflecting the selection only
+        fs.writeFile(selectionPath, JSON.stringify(selected, null, 2), 'utf8', (err) => {
+          if (err) console.error('Failed to write Selected_satellites.json:', err.message);
         });
+        const tlePairs = selected.map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
+        fs.writeFile('TLE_first_50.json', JSON.stringify(tlePairs, null, 2), 'utf8', (err) => {
+          if (err) console.error('Failed to write TLE_first_50.json:', err.message);
+        });
+        console.log(`Persistent selection active: ${selected.length} satellites`);
       } else {
-        console.warn('No TLE pairs (tle1/tle2) found in the first 50 items.');
+        console.warn('No TLE pairs available to persist selection.');
       }
     } catch (e) {
       console.error('Error extracting first 50 TLE pairs:', e.message);
@@ -250,18 +286,34 @@ app.get('/api/positions', async (req, res) => {
       }
     }
 
-    // Try to compute from TLE_first_50.json
-    const tlePath = path.join(__dirname, 'TLE_first_50.json');
+    // Prefer computing from persistent Selected_satellites.json
+    const selectionPath = path.join(__dirname, 'Selected_satellites.json');
     let tlePairs = [];
-    if (fs.existsSync(tlePath)) {
+    if (fs.existsSync(selectionPath)) {
       try {
-        const content = fs.readFileSync(tlePath, 'utf8');
+        const content = fs.readFileSync(selectionPath, 'utf8');
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed)) {
-          tlePairs = parsed.slice(0, 50);
+          tlePairs = parsed.slice(0, 50).map(s => ({ tle1: s.tle1, tle2: s.tle2 }));
         }
       } catch (e) {
-        console.warn('Failed to read/parse TLE_first_50.json:', e.message);
+        console.warn('Failed to read/parse Selected_satellites.json, will try TLE_first_50.json fallback:', e.message);
+      }
+    }
+
+    // Fallback to legacy TLE_first_50.json if selection file not available
+    if (!tlePairs.length) {
+      const tlePath = path.join(__dirname, 'TLE_first_50.json');
+      if (fs.existsSync(tlePath)) {
+        try {
+          const content = fs.readFileSync(tlePath, 'utf8');
+          const parsed = JSON.parse(content);
+          if (Array.isArray(parsed)) {
+            tlePairs = parsed.slice(0, 50);
+          }
+        } catch (e) {
+          console.warn('Failed to read/parse TLE_first_50.json:', e.message);
+        }
       }
     }
 

@@ -318,7 +318,7 @@ function displaySatellites(satellites, userLocation) {
             const content = `
                 <div style="padding: 10px;">
                     <h3 style="margin: 0 0 10px 0;">${satellite.name || 'Satellite'}</h3>
-                    ${satellite.altitude ? `<p><strong>Altitude:</strong> ${satellite.altitude} km</p>` : ''}
+                    ${satellite.altitude ? `<p><strong>Altitude:</strong> ${satellite.altitude.toFixed(4)} km</p>` : ''}
                     <p><strong>Position:</strong> ${lat.toFixed(4)}°, ${lng.toFixed(4)}°</p>
                 </div>
             `;
