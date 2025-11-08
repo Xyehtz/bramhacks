@@ -26,17 +26,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const response = await fetch('/api/maps/key');
         
         if (!response.ok) {
-            console.error('Server response:', responseText);
+            console.error('Server error status:', response.status, response.statusText);
             throw new Error(`Failed to fetch Google Maps API key: ${response.status} ${response.statusText}`);
         }
         
         let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch (e) {
-            console.error('Response is not valid JSON:', responseText);
-            throw new Error('Invalid JSON response from server');
-        }
+        data = await response.json();
 
         if (!data.key) {
             throw new Error('No API key found in server response');
