@@ -441,6 +441,13 @@ function displaySatellites(satellites, userLocation) {
         satellite.id = satId; // ensure id stored for velocity tracking
         incomingIds.add(String(satId));
 
+        const satelliteIcon = {
+            url: "./models/red-satellite.png", // relative path from where your HTML is served
+            scaledSize: new google.maps.Size(32, 32), // adjust for your desired size
+            anchor: new google.maps.Point(16, 16), // centers the icon
+        };
+
+
         // Update existing marker or create a new one
         const existing = satelliteMarkers.get(String(satId));
         if (existing && existing.marker) {
@@ -451,14 +458,7 @@ function displaySatellites(satellites, userLocation) {
                 position: satPosition,
                 map: map,
                 title: satellite.name || `Satellite ${idx + 1}`,
-                icon: {
-                    path: google.maps.SymbolPath.CIRCLE,
-                    scale: 6,
-                    fillColor: '#FF0000',
-                    fillOpacity: 0.8,
-                    strokeColor: '#ffffff',
-                    strokeWeight: 2
-                }
+                icon: satelliteIcon
             });
 
             // Click selects satellite and updates side panel (no popup cards)
