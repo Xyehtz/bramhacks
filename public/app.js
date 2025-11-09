@@ -243,6 +243,13 @@ function startTracking() {
     // Fetch positions immediately
     fetchPositions();
     
+    // // Quick second fetch after 1 second to get velocities
+    // setTimeout(() => {
+    //     if (userLocation) {
+    //         fetchPositions();
+    //     }
+    // }, 1000);
+    
     // Set up auto-refresh
     updateInterval = setInterval(() => {
         if (userLocation) {
@@ -393,7 +400,21 @@ function displaySatellites(satellites, userLocation) {
         if (!panel.container) return;
         panel.container.classList.remove('hidden');
         if (panel.name) panel.name.textContent = sat.name || (sat.satnum ? `SAT ${sat.satnum}` : 'Satellite');
-        if (panel.altitude) panel.altitude.textContent = typeof sat.altitude === 'number' ? sat.altitude.toFixed(2) : 'N/A';
+        if (panel.altitude) {
+            const alt = typeof sat.altitude === 'number' ? sat.altitude.toFixed(2) : 'N/A';
+            const orbitType = typeof sat.altitude === 'number'
+            ? (sat.altitude > 35786
+                ? ' km (High Earth Orbit)'
+                : sat.altitude > 2000
+                ? ' km (Medium Earth Orbit)'
+                : sat.altitude > 160
+                    ? ' km (Low Earth Orbit)'
+                    : sat.altitude > 100
+                    ? ' km (Transatmospheric Orbit)'
+                    : ' km (Sub-orbital)')
+            : '';
+            panel.altitude.textContent = alt + (alt !== 'N/A' ? orbitType : '');
+        }
         if (panel.country) {
             const cc = (sat.country || '').toString().trim();
             const full = cc ? countryCodeToName(cc) : '';
@@ -411,6 +432,7 @@ function displaySatellites(satellites, userLocation) {
         }   
         if (panel.launch) panel.launch.textContent = sat.launch || 'N/A';
         if (panel.velocity) {
+
             // compute approximate velocity from consecutive samples
             const last = lastSamples.get(String(sat.id));
             const nowMs = Date.now();
@@ -420,7 +442,7 @@ function displaySatellites(satellites, userLocation) {
                 const dt = (nowMs - last.timeMs) / 1000; // seconds
                 if (dt > 0) vel = dKm / dt; // km/s
             }
-            panel.velocity.textContent = (vel && isFinite(vel)) ? vel.toFixed(3) : 'N/A';
+            panel.velocity.textContent = (vel && isFinite(vel)) ? vel.toFixed(3) + 'km/s' : 'Calculating...';
             // store current sample
             lastSamples.set(String(sat.id), { lat: sat.lat, lng: sat.lng, timeMs: nowMs, altitudeKm: sat.altitude });
         }
@@ -741,7 +763,7 @@ async function fetchPositions() {
                 tle1: p.tle1,
                 tle2: p.tle2
             }));
-
+        // check if we have prior satellite data to compute velocities
         if (satellites.length > 0) {
             displaySatellites(satellites, userLocation);
             updateStatus(`Tracking ${satellites.length} satellites`);
