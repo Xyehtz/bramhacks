@@ -393,7 +393,17 @@ function displaySatellites(satellites, userLocation) {
         if (!panel.container) return;
         panel.container.classList.remove('hidden');
         if (panel.name) panel.name.textContent = sat.name || (sat.satnum ? `SAT ${sat.satnum}` : 'Satellite');
-        if (panel.altitude) panel.altitude.textContent = typeof sat.altitude === 'number' ? sat.altitude.toFixed(2) : 'N/A';
+        if (panel.altitude) panel.altitude.textContent = typeof sat.altitude !== 'number' ?
+            'N/A'
+            : sat.altitude.toFixed(2) < 160
+                ? `${sat.altitude.toFixed(2)} Km - Transatmospheric orbit (TAO)`
+                    : sat.altitude.toFixed(2) >= 160 && sat.altitude.toFixed(2) < 2000
+                ? `${sat.altitude.toFixed(2)} Km - Low Earth orbit (LEO)`
+                    : sat.altitude.toFixed(2) >= 2000 && sat.altitude.toFixed(2) < 35786
+                ? `${sat.altitude.toFixed(2)} Km - Medium Earth orbit (MEO)`
+                    : sat.altitude.toFixed(2) >= 35786
+                ? `${sat.altitude.toFixed(2)} Km - High Earth orbit (HEO)`
+                    : `${sat.altitude.toFixed(2)} Km`
         if (panel.country) {
             const cc = (sat.country || '').toString().trim();
             const full = cc ? countryCodeToName(cc) : '';
@@ -420,7 +430,7 @@ function displaySatellites(satellites, userLocation) {
                 const dt = (nowMs - last.timeMs) / 1000; // seconds
                 if (dt > 0) vel = dKm / dt; // km/s
             }
-            panel.velocity.textContent = (vel && isFinite(vel)) ? vel.toFixed(3) : 'N/A';
+            panel.velocity.textContent = (vel && isFinite(vel)) ? `${vel.toFixed(3)} Km/s` : 'Calculating velocity...';
             // store current sample
             lastSamples.set(String(sat.id), { lat: sat.lat, lng: sat.lng, timeMs: nowMs, altitudeKm: sat.altitude });
         }
