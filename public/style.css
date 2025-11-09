@@ -283,3 +283,16 @@ body {
     }
 }
 
+.easter-egg {
+    color: rgba(15, 23, 42, 0.5);
+    background-color: rgba(15, 23, 42, 0.5);
+    opacity: 0.05;
+}
+
+.easter-egg::selection {
+    color: #E2E8F0
+}
+
+.easter-egg::-moz-selection {
+    color: #E2E8F0;
+}
