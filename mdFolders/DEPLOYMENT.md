@@ -1,6 +1,6 @@
 # GitHub Pages Deployment Guide
 
-> **Note**: This project is now configured for **full Vercel deployment**. See [VERCEL_DEPLOYMENT.md](VERCEL_DEPLOYMENT.md) for the recommended deployment method.
+> **Note**: This project is now configured for **full Vercel deployment**. See [VERCEL_DEPLOYMENT.md](../VERCEL_DEPLOYMENT.md) for the recommended deployment method.
 
 This guide explains how to deploy the frontend to GitHub Pages (if you prefer separate frontend/backend hosting).
 
