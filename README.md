@@ -1,4 +1,4 @@
-# Satellite Tracker 🛰️
+# SatTrackr - Satellite Tracking Web-App 🛰️
 
 A real-time satellite tracking application that displays satellites currently in space on an interactive Google Maps interface. The app tracks satellites flying over your location and provides notifications when satellites are overhead.
 
